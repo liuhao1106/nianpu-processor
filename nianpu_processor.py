@@ -11,10 +11,12 @@
 格式E：X年 公N歲（跨行年份+年齡）(沈端恪風格)
 格式F：出生：X年干支...先生生/公生
 
-功能：年份標題化、年號補全、段落整理、自我進化
+功能：年份標題化、年號補全、段落整理、月份/季節分段、自我進化（置信度評分、從修正中學習、審查清理）
 
 用法：
   python nianpu_processor.py <輸入檔案路徑> [輸出檔案路徑]
+  python nianpu_processor.py --status        # 查看學習狀態
+  python nianpu_processor.py --prune          # 清理無效學習
 """
 
 import re, sys, json, os
@@ -163,10 +165,12 @@ def _load_learnings():
     if _LEARNINGS_CACHE is not None:
         return _LEARNINGS_CACHE
     template = {
-        'discovered_reigns': {},      # {年號: {source: 檔名, count: N}}
-        'discovered_prefixes': {},    # {前綴: {source: 檔名, reign: 年號}}
-        'age_suffix_variants': {},    # {字形: {source: 檔名}}
-        'person_prefix_variants': {}, # {稱謂: {source: 檔名}}
+        'discovered_reigns': {},      # {年號: {source: 檔名, count: N, confidence: 0.0~1.0, invalidated: false}}
+        'discovered_prefixes': {},    # {前綴: {source: 檔名, reign: 年號, invalidated: false}}
+        'age_suffix_variants': {},    # {字形: {source: 檔名, invalidated: false}}
+        'person_prefix_variants': {}, # {稱謂: {source: 檔名, invalidated: false}}
+        'corrections': [],            # [{type: 'reign'|'prefix'|'suffix', wrong: '', correct: '',
+                                      #   source: 檔名, date: ISO}]
         'processed_files': [],        # [{file: 檔名, year_count: N, coverage: %,
                                       #   missed: N, format: 格式描述}]
     }
@@ -177,6 +181,12 @@ def _load_learnings():
             for key in template:
                 if key not in data:
                     data[key] = template[key]
+            # 確保舊數據有 invalidated 字段
+            for section in ['discovered_reigns', 'discovered_prefixes',
+                            'age_suffix_variants', 'person_prefix_variants']:
+                for k, v in data.get(section, {}).items():
+                    if isinstance(v, dict) and 'invalidated' not in v:
+                        v['invalidated'] = False
             _LEARNINGS_CACHE = data
             return data
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -193,62 +203,175 @@ def _save_learnings(data):
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
+def _is_valid_reign_candidate(candidate):
+    """驗證年號候選是否合理。
+
+    排除：純數字、太短、含標點、含年歲字、已知年號的子集。
+    """
+    # 必須是 2-6 個 CJK 字元
+    if len(candidate) < 2 or len(candidate) > 6:
+        return False
+    # 不能是純數字或數字相關
+    if all(c in '一二三四五六七八九十百千萬零' for c in candidate):
+        return False
+    # 不能含標點
+    if re.search(r'[。，、！？；：〔〕「」『』（）\[\]《》〈〉""''，、\s]', candidate):
+        return False
+    # 不能含年歲嵗等表示時間的字
+    if any(c in candidate for c in '年歲嵗'):
+        return False
+    # 不能是已知年號的片段
+    for known in REIGNS:
+        if candidate in known or known in candidate:
+            return False
+    # 不能是皇帝前綴的片段
+    for prefix, _ in EMPEROR_PREFIXES:
+        if prefix and candidate in prefix:
+            return False
+    # 必須至少包含一個 CJK 統一表意文字
+    cjk_count = sum(1 for c in candidate if '\u4e00' <= c <= '\u9fff')
+    if cjk_count < 1:
+        return False
+    return True
+
+
+def _compute_reign_confidence(candidate, text, matches_in_text):
+    """計算年號候選的置信度 (0.0~1.0)。"""
+    score = 0.0
+
+    # 1. 出現次數 (最多 0.3)
+    if matches_in_text <= 1:
+        score += 0.05
+    elif matches_in_text == 2:
+        score += 0.15
+    else:
+        score += 0.3
+
+    # 2. 候選品質 (最多 0.4)
+    if 2 <= len(candidate) <= 4:
+        score += 0.2  # 正常年號長度
+    # 結尾不含「皇皇帝帝」
+    if not candidate.endswith(('皇', '帝')):
+        score += 0.1
+    # 看起來像年號的常見結尾模式
+    if candidate[-1] in ('治', '熙', '慶', '光', '豐', '緒', '禎', '曆', '武', '統'):
+        score += 0.1
+    # 是否和已知年號共享部首/偏旁（形近字探測）
+    for known in REIGNS:
+        shared = sum(1 for a, b in zip(candidate, known) if a == b)
+        if shared >= 2 and len(candidate) >= 2:
+            score += 0.1
+            break
+
+    # 3. 上下文品質 (最多 0.3)
+    # 出現位置前後是否和年份相關
+    for m in re.finditer(re.escape(candidate) + r'\d+年' + STEM_BRANCH, text):
+        score += 0.2
+        break
+    # 不和其他雜訊關鍵字相鄰
+    noise_pattern = r'[。，、！？]' + re.escape(candidate)
+    if re.search(noise_pattern, text):
+        score -= 0.1
+
+    return max(0.0, min(1.0, score))
+
+
 def _discover_reigns(text):
     """掃描文本，發現不在 REIGNS 列表中的年號。
 
     策略：查找「N年干支」模式，提取 N 之前的文字作為潛在年號。
+    加入驗證和置信度評分，過濾假陽性。
     """
     y = _build_year_pattern()
     sb = STEM_BRANCH
-    # 匹配：文字+N年干支（文字部分可能是新年號）
     pattern = re.compile(r'([^\d\s\n]{1,6})' + y + r'年' + sb)
-    found = set()
+    found = {}
     for m in pattern.finditer(text):
         candidate = m.group(1).strip()
-        # 排除已知年號和常見非年號詞
         if candidate in REIGNS:
             continue
         if any(candidate.startswith(r) for r in REIGNS):
             continue
         if any(candidate.endswith(p) for p in ['先生', '公', '府君']):
             continue
-        if len(candidate) <= 1:
+        if not _is_valid_reign_candidate(candidate):
             continue
-        if any(c in candidate for c in '年歲嵗'):
+        if candidate not in found:
+            found[candidate] = 0
+        found[candidate] += 1
+
+    # 計算置信度並過濾低置信度候選
+    result = {}
+    for candidate, count in found.items():
+        confidence = _compute_reign_confidence(candidate, text, count)
+        # 置信度 < 0.2 的跳過
+        if confidence < 0.2:
             continue
-        # 去噪：排除含標點符號的候選
-        if re.search(r'[。，、！？；：〔〕「」『』（）\[\]《》〈〉「」『』""''，、]', candidate):
-            continue
-        found.add(candidate)
-    return found
+        result[candidate] = {
+            'count': count,
+            'confidence': round(confidence, 2)
+        }
+    return result
+
+
+def _is_valid_prefix_candidate(prefix):
+    """驗證皇帝前綴候選是否合理。"""
+    # 不能含標點
+    if re.search(r'[。，、！？；：]', prefix):
+        return False
+    # 長度合理 (2-12)
+    if len(prefix) < 2 or len(prefix) > 12:
+        return False
+    # 必須以皇帝/皇/帝結尾
+    if not prefix.endswith(('皇帝', '皇', '帝')):
+        return False
+    return True
 
 
 def _discover_prefixes(text):
     """掃描文本，發現新的皇帝廟號前綴。"""
     known_prefixes = [p for p, _ in EMPEROR_PREFIXES if p]
-    # 匹配模式：XXXX皇帝/XXXX皇 後接已知年號
-    pat = re.compile(r'([^\s\n]{2,8}(?:皇帝|皇|帝))(' + '|'.join(REIGNS) + r')')
+    pat = re.compile(r'([^\s\n]{2,12}(?:皇帝|皇|帝))(' + '|'.join(REIGNS) + r')')
     found = {}
     for m in pat.finditer(text):
         prefix = m.group(1)
         reign = m.group(2)
-        if prefix not in known_prefixes:
+        if prefix not in known_prefixes and _is_valid_prefix_candidate(prefix):
             found[prefix] = reign
     return found
 
 
+def _is_valid_suffix_candidate(suffix):
+    """驗證年齡後綴候選是否合理。
+
+    合理的年齡後綴：單個字，且和「歲」字形相近（含止/山/夕等部件）。
+    """
+    if len(suffix) != 1:
+        return False
+    if suffix in AGE_SUFFIXES:
+        return False
+    if suffix in '歲歳嵗𡻕年歲':
+        return False
+    # 檢查是否包含「歲」的部件
+    sui_parts = set('歲歳嵗𡻕')
+    if any(p in suffix for p in sui_parts):
+        return True
+    # 檢查常見 OCR 變體：足→𧾷、山部首等
+    ocr_variants = set('𡻕𡻑𡺼𡵌𡶫')
+    if any(v in suffix for v in ocr_variants):
+        return True
+    return False
+
+
 def _discover_age_suffixes(text):
     """掃描文本，發現新的年齡後綴字形。"""
-    suffixes = set(AGE_SUFFIXES)
-    # 匹配年齡數字後的罕見字
     an = AGE_DIGITS
     pat = re.compile(r'(?:' + an + r')([^，。、\s\n]{1,2})')
     found = set()
     for m in pat.finditer(text):
         s = m.group(1)
-        if s not in suffixes and s not in '歲歳嵗𡻕年歲':
-            if any(c in s for c in '歲歳嵗𡻕'):
-                found.add(s)
+        if _is_valid_suffix_candidate(s):
+            found.add(s)
     return found
 
 
@@ -263,16 +386,23 @@ def self_learn(original_text, result, source_file='', report_lines=None):
     """
     learnings = _load_learnings()
 
-    # 1. 發現新年號
+    # 1. 發現新年號（含置信度）
     new_reigns = _discover_reigns(original_text)
-    for r in new_reigns:
+    for r, info in new_reigns.items():
         if r not in learnings['discovered_reigns']:
             learnings['discovered_reigns'][r] = {
                 'source': source_file,
-                'count': 1
+                'count': info['count'],
+                'confidence': info['confidence'],
+                'invalidated': False
             }
         else:
-            learnings['discovered_reigns'][r]['count'] += 1
+            existing = learnings['discovered_reigns'][r]
+            existing['count'] = existing.get('count', 0) + info['count']
+            # 保留更高的置信度
+            existing['confidence'] = max(
+                existing.get('confidence', 0), info['confidence']
+            )
 
     # 2. 發現新前綴
     new_prefixes = _discover_prefixes(original_text)
@@ -280,14 +410,18 @@ def self_learn(original_text, result, source_file='', report_lines=None):
         if prefix not in learnings['discovered_prefixes']:
             learnings['discovered_prefixes'][prefix] = {
                 'source': source_file,
-                'reign': reign
+                'reign': reign,
+                'invalidated': False
             }
 
     # 3. 發現新字形
     new_suffixes = _discover_age_suffixes(original_text)
     for s in new_suffixes:
         if s not in learnings['age_suffix_variants']:
-            learnings['age_suffix_variants'][s] = {'source': source_file}
+            learnings['age_suffix_variants'][s] = {
+                'source': source_file,
+                'invalidated': False
+            }
 
     # 4. 統計處理結果
     hs = [l for l in result.split('\n') if l.startswith('### ')]
@@ -305,13 +439,29 @@ def self_learn(original_text, result, source_file='', report_lines=None):
             if m:
                 missed = int(m.group(1))
 
-    learnings['processed_files'].append({
-        'file': source_file,
-        'year_count': year_count,
-        'coverage': coverage,
-        'missed': missed,
-        'reigns_found': list(new_reigns) if new_reigns else [],
-    })
+    # 去重：避免同一檔案重複記錄
+    existing_indices = [
+        i for i, f in enumerate(learnings['processed_files'])
+        if f['file'] == source_file
+    ]
+    if existing_indices:
+        # 更新最後一次記錄
+        idx = existing_indices[-1]
+        learnings['processed_files'][idx] = {
+            'file': source_file,
+            'year_count': year_count,
+            'coverage': coverage,
+            'missed': missed,
+            'reigns_found': list(new_reigns.keys()) if new_reigns else [],
+        }
+    else:
+        learnings['processed_files'].append({
+            'file': source_file,
+            'year_count': year_count,
+            'coverage': coverage,
+            'missed': missed,
+            'reigns_found': list(new_reigns.keys()) if new_reigns else [],
+        })
 
     # 只保留最近 50 條記錄
     if len(learnings['processed_files']) > 50:
@@ -321,40 +471,96 @@ def self_learn(original_text, result, source_file='', report_lines=None):
     return learnings
 
 
+def _record_correction(learnings, corr_type, wrong_value, correct_value, source):
+    """記錄一個手動修正（用於從修正中學習）。"""
+    learnings.setdefault('corrections', [])
+    learnings['corrections'].append({
+        'type': corr_type,
+        'wrong': wrong_value,
+        'correct': correct_value,
+        'source': source,
+        'date': __import__('datetime').datetime.now().isoformat()[:10]
+    })
+
+    # 同時標記對應的發現為無效
+    if corr_type == 'reign' and wrong_value in learnings.get('discovered_reigns', {}):
+        learnings['discovered_reigns'][wrong_value]['invalidated'] = True
+    elif corr_type == 'prefix' and wrong_value in learnings.get('discovered_prefixes', {}):
+        learnings['discovered_prefixes'][wrong_value]['invalidated'] = True
+    elif corr_type == 'suffix' and wrong_value in learnings.get('age_suffix_variants', {}):
+        learnings['age_suffix_variants'][wrong_value]['invalidated'] = True
+
+
+def prune_invalidated_learnings(learnings=None):
+    """移除所有被標記為無效的學習，並整理數據。
+
+    可在命令列調用：python nianpu_processor.py --prune
+    """
+    if learnings is None:
+        learnings = _load_learnings()
+
+    removed = {'reigns': [], 'prefixes': [], 'suffixes': []}
+
+    # 清理無效年號
+    for r in list(learnings.get('discovered_reigns', {}).keys()):
+        info = learnings['discovered_reigns'][r]
+        if info.get('invalidated'):
+            removed['reigns'].append(r)
+            del learnings['discovered_reigns'][r]
+
+    # 清理無效前綴
+    for p in list(learnings.get('discovered_prefixes', {}).keys()):
+        info = learnings['discovered_prefixes'][p]
+        if info.get('invalidated'):
+            removed['prefixes'].append(p)
+            del learnings['discovered_prefixes'][p]
+
+    # 清理無效字形
+    for s in list(learnings.get('age_suffix_variants', {}).keys()):
+        info = learnings['age_suffix_variants'][s]
+        if info.get('invalidated'):
+            removed['suffixes'].append(s)
+            del learnings['age_suffix_variants'][s]
+
+    _save_learnings(learnings)
+    return removed
+
+
+_DEFAULT_CONFIDENCE_THRESHOLD = 0.4  # 年號自動應用的置信度閾值
+
+
 def apply_learnings():
     """從學習檔案加載已知知識，動態擴展配置。
 
+    使用置信度閾值過濾低質量年號，排除已無效的學習。
     返回學習摘要（新增了什麼）。
     """
     learnings = _load_learnings()
     changes = []
 
-    # 動態擴展 REIGNS
-    new_ri = [r for r in learnings['discovered_reigns']
-              if r not in REIGNS
-              and learnings['discovered_reigns'][r]['count'] >= 2]
+    # 動態擴展 REIGNS（僅置信度 >= 閾值的，且未被無效化的）
+    new_ri = []
+    for r, info in sorted(learnings['discovered_reigns'].items()):
+        if r not in REIGNS:
+            conf = info.get('confidence', 0)
+            count = info.get('count', 0)
+            invalidated = info.get('invalidated', False)
+            if not invalidated and count >= 2 and conf >= _DEFAULT_CONFIDENCE_THRESHOLD:
+                new_ri.append(r)
     if new_ri:
         REIGNS.extend(new_ri)
         changes.append(f"年號 +{len(new_ri)}：{'、'.join(new_ri)}")
 
-    # 動態擴展 EMPEROR_PREFIXES
+    # 動態擴展 EMPEROR_PREFIXES（排除已無效的）
     existing_prefixes = {p for p, _ in EMPEROR_PREFIXES}
-    new_ep = [(p, info['reign'])
-              for p, info in learnings['discovered_prefixes'].items()
-              if p not in existing_prefixes]
+    new_ep = []
+    for p, info in learnings['discovered_prefixes'].items():
+        if p not in existing_prefixes and not info.get('invalidated', False):
+            new_ep.append((p, info['reign']))
     if new_ep:
         for prefix, reign in new_ep:
             EMPEROR_PREFIXES.insert(0, (prefix, reign))
         changes.append(f"前綴 +{len(new_ep)}：{'、'.join(p for p, _ in new_ep)}")
-
-    # 動態擴展 AGE_SUFFIXES
-    new_sf = [s for s in learnings['age_suffix_variants']
-              if s not in AGE_SUFFIXES]
-    if new_sf:
-        # AGE_SUFFIXES 是 str，需要擴展
-        extended = AGE_SUFFIXES + ''.join(new_sf)
-        # 我們不能修改全局常量，但可以在應用級別記錄
-        changes.append(f"字形 +{len(new_sf)}：{'、'.join(new_sf)}")
 
     return changes
 
@@ -370,24 +576,61 @@ def print_learnings_summary():
     d_r = learnings['discovered_reigns']
     d_p = learnings['discovered_prefixes']
     d_s = learnings['age_suffix_variants']
+    corrections = learnings.get('corrections', [])
     files = learnings['processed_files']
 
-    if d_r:
-        lines.append(f"\n▸ 已發現 {len(d_r)} 個新年號：")
-        for r, info in sorted(d_r.items()):
-            lines.append(f"  「{r}」（發現 {info['count']} 次，來源：{info['source']}）")
+    # === 新年號 ===
+    # 分為有效和無效
+    valid_reigns = {k: v for k, v in d_r.items() if not v.get('invalidated', False)}
+    invalid_reigns = {k: v for k, v in d_r.items() if v.get('invalidated', False)}
 
-    if d_p:
-        lines.append(f"\n▸ 已發現 {len(d_p)} 個新前綴：")
-        for p, info in d_p.items():
-            lines.append(f"  「{p}」→ {info['reign']}（來源：{info['source']}）")
+    if valid_reigns:
+        lines.append(f"\n▸ 已發現 {len(valid_reigns)} 個新年號（有效）：")
+        for r, info in sorted(valid_reigns.items()):
+            conf = info.get('confidence', 0)
+            bar = '█' * int(conf * 10) + '░' * (10 - int(conf * 10))
+            lines.append(f"  「{r}」發現 {info['count']} 次 [置信度 {conf:.0%} {bar}]")
 
-    if d_s:
-        lines.append(f"\n▸ 已發現 {len(d_s)} 個字形變體：")
-        for s, info in d_s.items():
+    if invalid_reigns:
+        lines.append(f"\n▸ 已作廢 {len(invalid_reigns)} 個年號（無效）：")
+        for r, info in sorted(invalid_reigns.items()):
+            lines.append(f"  「{r}」（來源：{info['source']}）")
+
+    # === 新前綴 ===
+    valid_prefixes = {k: v for k, v in d_p.items() if not v.get('invalidated', False)}
+    invalid_prefixes = {k: v for k, v in d_p.items() if v.get('invalidated', False)}
+
+    if valid_prefixes:
+        lines.append(f"\n▸ 已發現 {len(valid_prefixes)} 個新前綴（有效）：")
+        for p, info in valid_prefixes.items():
+            lines.append(f"  「{p}」→ {info['reign']}")
+    if invalid_prefixes:
+        lines.append(f"\n▸ 已作廢 {len(invalid_prefixes)} 個前綴（無效）：")
+        for p, info in invalid_prefixes.items():
+            lines.append(f"  「{p}」→ {info['reign']}")
+
+    # === 字形變體 ===
+    valid_suffixes = {k: v for k, v in d_s.items() if not v.get('invalidated', False)}
+    invalid_suffixes = {k: v for k, v in d_s.items() if v.get('invalidated', False)}
+
+    if valid_suffixes:
+        lines.append(f"\n▸ 已發現 {len(valid_suffixes)} 個字形變體（有效）：")
+        for s, info in valid_suffixes.items():
             code = f"U+{ord(s[0]):04X}" if len(s) == 1 else f"U+{ord(s[0]):04X}…"
-            lines.append(f"  {code}「{s}」（來源：{info['source']}）")
+            lines.append(f"  {code}「{s}」")
+    if invalid_suffixes:
+        lines.append(f"\n▸ 已作廢 {len(invalid_suffixes)} 個字形（無效）：")
+        for s, info in invalid_suffixes.items():
+            code = f"U+{ord(s[0]):04X}" if len(s) == 1 else f"U+{ord(s[0]):04X}…"
+            lines.append(f"  {code}「{s}」")
 
+    # === 修正記錄 ===
+    if corrections:
+        lines.append(f"\n▸ 修正記錄：{len(corrections)} 條")
+        for c in corrections[-5:]:  # 只顯示最近5條
+            lines.append(f"  {c['type']}：「{c['wrong']}」→「{c['correct']}」（{c.get('date', '?')}）")
+
+    # === 處理統計 ===
     if files:
         total = len(files)
         avg_cov = sum(f['coverage'] for f in files) / total if total > 0 else 0
@@ -994,6 +1237,25 @@ def main():
 
     # --status 查看學習狀態
     if sys.argv[1] == '--status':
+        try: print(print_learnings_summary())
+        except UnicodeEncodeError: pass
+        return
+
+    # --prune 清理無效學習
+    if sys.argv[1] == '--prune':
+        removed = prune_invalidated_learnings()
+        total = sum(len(v) for v in removed.values())
+        if total > 0:
+            print(f"▸ 已清理 {total} 項無效學習：")
+            if removed['reigns']:
+                print(f"  年號：{'、'.join(removed['reigns'])}")
+            if removed['prefixes']:
+                print(f"  前綴：{'、'.join(removed['prefixes'])}")
+            if removed['suffixes']:
+                print(f"  字形：{'、'.join(removed['suffixes'])}")
+        else:
+            print("▸ 無需清理，所有學習均有效。")
+        print()
         try: print(print_learnings_summary())
         except UnicodeEncodeError: pass
         return
