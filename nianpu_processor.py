@@ -27,9 +27,28 @@ LEARNINGS_FILE = SKILL_DIR / 'learnings.json'
 
 
 # ======== 配置區 ========
-# 年號：包含明代（含南明）、清代
-REIGNS = ['萬厯', '萬曆', '天啟', '崇禎', '隆武', '永厯', '永曆', '宏光', '紹武',
-          '順治', '康熙', '雍正', '乾隆', '嘉慶', '道光', '咸豐', '同治', '光緖', '光緒']
+# 年號：包含宋代、元代、明代（含南明）、清代
+# 注意：清與南明年號在前（沿用既有行為），其後為明/元/宋；無重疊前綴，順序不影響匹配
+REIGNS = [
+    # 明代
+    '洪武', '建文', '永樂', '洪熙', '宣德', '正統', '景泰', '天順', '成化',
+    '弘治', '正德', '嘉靖', '隆慶', '萬厯', '萬曆', '泰昌', '天啟', '崇禎',
+    # 南明
+    '隆武', '永厯', '永曆', '宏光', '弘光', '紹武',
+    # 元代
+    '中統', '至元', '元貞', '大德', '至大', '皇慶', '延祐', '至治', '泰定',
+    '致和', '天曆', '至順', '元統', '至正',
+    # 宋代（北宋+南宋）
+    '建隆', '乾德', '開寶', '太平興國', '雍熙', '端拱', '淳化', '至道',
+    '咸平', '景德', '大中祥符', '天禧', '乾興', '天聖', '明道', '景祐',
+    '寶元', '康定', '慶曆', '皇祐', '至和', '嘉祐', '治平', '熙寧', '元豐',
+    '元祐', '紹聖', '元符', '建中靖國', '崇寧', '大觀', '政和', '重和',
+    '宣和', '靖康', '建炎', '紹興', '隆興', '乾道', '淳熙', '紹熙', '慶元',
+    '嘉泰', '開禧', '嘉定', '寶慶', '紹定', '端平', '嘉熙', '淳祐', '寶祐',
+    '開慶', '景定', '咸淳', '德祐', '景炎', '祥興',
+    # 清代
+    '順治', '康熙', '雍正', '乾隆', '嘉慶', '道光', '咸豐', '同治', '光緖', '光緒',
+]
 
 EMPEROR_PREFIXES = [
     ('世祖章皇帝','順治'),('世祖章','順治'),
@@ -48,7 +67,80 @@ EMPEROR_PREFIXES = [
 
 PERSON_PREFIXES = ['先生','公','府君']
 AGE_SUFFIXES = '嵗歲歳𡻕'
+AGE_SUFFIX_REQUIRED = '[' + AGE_SUFFIXES + ']'   # 年齡後綴必備（無稱謂格式用，避免誤配「六月」等月份/日期字）
 AGE_DIGITS = r'[十有和一二三四五六七八九十百零〇\d]+'
+
+# 各年號元年對應的公元年份（含異體字）。用於在標題上標註公元年，如 嘉慶十一年 → 1806年
+REIGN_START_YEARS = {
+    # 明代
+    '洪武': 1368, '建文': 1399, '永樂': 1403, '洪熙': 1425, '宣德': 1426,
+    '正統': 1436, '景泰': 1450, '天順': 1457, '成化': 1465, '弘治': 1488,
+    '正德': 1506, '嘉靖': 1522, '隆慶': 1567,
+    '萬厯': 1573, '萬曆': 1573,
+    '泰昌': 1620, '天啟': 1621, '崇禎': 1628,
+    # 南明
+    '隆武': 1645, '永厯': 1647, '永曆': 1647,
+    '宏光': 1644, '弘光': 1644, '紹武': 1646,
+    # 元代
+    '中統': 1260, '至元': 1264, '元貞': 1295, '大德': 1297, '至大': 1308,
+    '皇慶': 1312, '延祐': 1314, '至治': 1321, '泰定': 1324, '致和': 1328,
+    '天曆': 1328, '至順': 1330, '元統': 1333, '至正': 1341,
+    # 宋代（北宋+南宋）
+    '建隆': 960, '乾德': 963, '開寶': 968, '太平興國': 976, '雍熙': 984,
+    '端拱': 988, '淳化': 990, '至道': 995, '咸平': 998, '景德': 1004,
+    '大中祥符': 1008, '天禧': 1017, '乾興': 1022, '天聖': 1023, '明道': 1032,
+    '景祐': 1034, '寶元': 1038, '康定': 1040, '慶曆': 1041, '皇祐': 1049,
+    '至和': 1054, '嘉祐': 1056, '治平': 1064, '熙寧': 1068, '元豐': 1078,
+    '元祐': 1086, '紹聖': 1094, '元符': 1098, '建中靖國': 1101, '崇寧': 1102,
+    '大觀': 1107, '政和': 1111, '重和': 1118, '宣和': 1119, '靖康': 1126,
+    '建炎': 1127, '紹興': 1131, '隆興': 1163, '乾道': 1165, '淳熙': 1174,
+    '紹熙': 1190, '慶元': 1195, '嘉泰': 1201, '開禧': 1205, '嘉定': 1208,
+    '寶慶': 1225, '紹定': 1228, '端平': 1234, '嘉熙': 1237, '淳祐': 1241,
+    '寶祐': 1253, '開慶': 1259, '景定': 1260, '咸淳': 1265, '德祐': 1275,
+    '景炎': 1276, '祥興': 1278,
+    # 清代
+    '順治': 1644, '康熙': 1662, '雍正': 1723, '乾隆': 1736, '嘉慶': 1796,
+    '道光': 1821, '咸豐': 1851, '同治': 1862, '光緖': 1875, '光緒': 1875,
+}
+
+# 中文數字→整數
+_CN_NUM = {
+    '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+    '六': 6, '七': 7, '八': 8, '九': 9, '十': 10, '百': 100,
+}
+
+
+def _chinese_year_to_int(s):
+    """中文數字年份（元/一~九/十/十一~十九/二十~九十九/十有一）轉為整數。"""
+    if s == '元':
+        return 1
+    total = 0
+    cur = 0
+    for ch in s:
+        if ch in '一二三四五六七八九':
+            cur = _CN_NUM[ch]
+        elif ch == '十':
+            cur = cur if cur else 1          # 「十一」→10+1；「十」→10
+            cur *= 10
+            total += cur
+            cur = 0
+        elif ch == '百':
+            total += (cur if cur else 1) * 100
+            cur = 0
+        # 「有」「和」等連接詞直接略過
+    total += cur
+    return total if total > 0 else None
+
+
+def _compute_ad_year(reign, year_str):
+    """由年號與年序計算公元年：公元年 = 年號元年公元 + 年序 - 1。"""
+    start = REIGN_START_YEARS.get(reign)
+    if start is None:
+        return None
+    n = _chinese_year_to_int(year_str)
+    if n is None:
+        return None
+    return start + n - 1
 
 # 天干地支（精確匹配，避免誤配「正月」「八月」）
 # 包含常見OCR變體：已（U+5DF2）代替己（U+5DF1）和巳（U+5DF3）
@@ -112,40 +204,67 @@ def _normalize_reign_variants(text):
 def _split_embedded_years(text):
     """在已合併的段落中二次掃描嵌入式年份模式。
 
-    處理如「八年戊子五歲。九年己丑六歲」等連續密集的年份條目。
-    在 `_merge_broken_lines` 之後調用，將隱藏的年份拆出為獨立標題。
+    處理如「八年戊子五歲。九年己丑六歲」等連續密集的年份條目，
+    以及行首獨立出現的「十七年壬申二十二歲」等條目。
+    在 `_merge_broken_lines` 之後調用，將隱藏的年份拆出為獨立標題，
+    並自動補全年號（沿用前一個標題的年號）。
     """
+    y = _build_year_pattern()
+    sb = STEM_BRANCH
+    an = AGE_DIGITS
+    as_required = AGE_SUFFIX_REQUIRED  # 後綴必備（無稱謂直接年齡格式）
+    ap = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
+    ar = '|'.join(REIGNS)
+
+    # 嵌入式模式：行首、或〔註文〕/句末標點後 接「(前綴)(年號)N年干支[標點][年]N歲」
+    # 年齡後綴必備，避免把「同治十一年壬申六月」中的「六」誤切為年份標題
+    embedded = re.compile(
+        r'(?:^|(?<=[〕。」）！？\n]))'
+        + r'(?:' + ap + r')?(?:' + ar + r')?'
+        + y + r'年' + sb
+        + r'[，,、。]?\s*'
+        + r'(?:年)?'
+        + an + as_required
+        + r'[，。、]?'
+    )
+
+    current_reign = [None]
     lines = text.split('\n')
     result = []
     for line in lines:
-        if not line.startswith('### ') and not line.startswith('## ') and not line.startswith('---'):
-            # 在非標題行中查找嵌入式年份模式
-            # 模式：句號/註文結束後緊接「N年干支N歲」
-            y = _build_year_pattern()
-            sb = STEM_BRANCH
-            an = AGE_DIGITS
-            as_ = r'[' + AGE_SUFFIXES + r']?'
-            ap = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
-            ar = '|'.join(REIGNS)
-
-            # 嵌入式模式：〔註文〕N年干支N歲 或 。N年干支N歲
-            embedded = re.compile(
-                r'([〕。」）！？\n])'
-                + r'(?:' + ap + r')?(?:' + ar + r')?'
-                + y + r'年' + sb
-                + r'[，,、。]?\s*'
-                + an + as_
-            )
-            m = embedded.search(line)
-            if m:
-                # 在匹配處插入換行和標題
-                full_match = m.group(0)
-                sep = m.group(1)
-                heading_text = full_match[len(sep):]
-                line = line.replace(
-                    full_match,
-                    sep + '\n### ' + heading_text + '\n'
-                )
+        if line.startswith('### '):
+            # 更新當前年號
+            r, _ = extract_reign(line[4:].strip())
+            if r:
+                current_reign[0] = r
+            result.append(line)
+            continue
+        if line.startswith('## ') or line.startswith('---') or not line.strip():
+            result.append(line)
+            continue
+        # 在非標題行中查找所有嵌入式年份（不止第一處）
+        parts = []
+        pos = 0
+        matched_any = False
+        for m in embedded.finditer(line):
+            if m.start() != pos:
+                parts.append(line[pos:m.start()])
+            heading = m.group(0).strip()
+            # 補全年號
+            h_reign, _ = extract_reign(heading)
+            if not h_reign and current_reign[0]:
+                heading = current_reign[0] + heading
+            # 過長或含句號則跳過（避免誤拆）
+            if len(heading) > 40 or '。' in heading:
+                parts.append(line[pos:m.end()])
+                pos = m.end()
+                continue
+            parts.append('\n### ' + heading + '\n')
+            pos = m.end()
+            matched_any = True
+        if matched_any:
+            parts.append(line[pos:])
+            line = ''.join(parts)
         result.append(line)
     return '\n'.join(result)
 
@@ -913,6 +1032,7 @@ def _build_full_pattern():
     sb = STEM_BRANCH
     an = AGE_DIGITS
     as_ = r'[' + AGE_SUFFIXES + r']?'
+    as_required = AGE_SUFFIX_REQUIRED  # 後綴必備（無稱謂直接年齡格式）
 
     ap = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
     ar = '|'.join(REIGNS)
@@ -920,14 +1040,15 @@ def _build_full_pattern():
     pp = r'(?:' + ap + r')?(?:' + ar + r')?'
 
     # 出生條目：X年干支...先生生/公生/府君生
-    birth = pp + y + r'年(?:' + sb + r')?' + r'[^\n]*?' + person + r'生(?:於)?' + r'[，。、]?'
+    # 中間文字不跨句號，避免誤把「爲公生朝」等生日慶祝當成出生，並防止吞噬其後的真實年份條目
+    birth = pp + y + r'年(?:' + sb + r')?' + r'[^。\n]*?' + person + r'生(?:於)?' + r'[，。、]?'
 
     # 年份條目（有干支）
-    # 匹配：可能前綴 + N年干支 + [最多60字符(不含換行)] + 先生[年]N嵗
-    # 限制中間文字長度（60字），防止誤匹配跨過長段註文
+    # 匹配：可能前綴 + N年干支 + [最多120字，不含換行與句號] + 先生[年]N嵗
+    # 中間文字限制不跨句號，防止一個條目吞噬其後的真實年份（如「道光元年辛巳三十一歲。府君…二年壬午三十二歲」）
     entry_sb = (
         pp + y + r'年' + sb
-        + r'[^\n]{0,120}?'                 # 容許中間最多120字（原為60）
+        + r'[^。\n]{0,120}?'             # 中間最多120字，不跨句號（原為60字）
         + person + r'(?:年)?\s*' + an + as_ # 先生[年]N嵗
         + r'[，。、]?'                    # 消耗年齡後綴後的標點
     )
@@ -937,7 +1058,7 @@ def _build_full_pattern():
         r'(?:' + ap + r')?(?:' + ar + r')'  # 年號前綴是必需的
         + y + r'年'
         + r'(?!' + sb + r')'        # 後面不是干支
-        + r'[^\n]*?'
+        + r'[^。\n]*?'
         + person + r'(?:年)?\s*' + an + as_
         + r'[，。、]?'                    # 消耗年齡後綴後的標點
     )
@@ -952,33 +1073,42 @@ def _build_full_pattern():
     )
 
     # 直接干支+公N嵗（無年號前綴）
-    # 匹配：行首/句末的干支 + 可選標點 + 内容 + 稱謂+年齡
+    # 匹配：行首/句末的干支 + 必需標點 + 内容 + 稱謂+年齡
+    # 標點為必需，避免把「乙丑春，與…先生一」中的「乙丑+季節」誤判為年份條目
     entry_sb_direct = (
         r'(?:^|(?<=[。！？；\n]))\s*'   # 行首或句末
         + r'(?<!年)'                     # 干支前不能有「年」
         + sb                             # 干支
-        + r'[，,、。]?\s*'               # 可選標點（含逗號句號）
-        + r'[^\n]{0,30}?'                # 中間内容（最多30字）
+        + r'[，,、。]\s*'               # 必需標點（逗號/句號）
+        + r'[^。\n]{0,30}?'              # 中間内容（最多30字，不跨句號）
         + person + r'(?:年)?\s*' + an + as_  # 稱謂+年齡
         + r'[，。、]?'                    # 消耗年齡後綴後的標點
     )
 
-    # 出生條目（直接生於，無先生/公前綴，澄懷主人風格）
-    # 匹配：康熙十一年壬子，是年...生於京師。
+    # 出生條目（直接生於，無先生/公前綴，澄懷主人/自定年譜風格）
+    # 匹配：康熙十一年壬子，是年...生於京師。 ／ 嘉慶十一年丙寅十月一日戌時。兆鏞生於...
+    # (?<!先) 防止把「先生於」中的「生於」誤判為出生（先生於≠生於）
+    # 第二分支容許跨一個句號（「…戌時。{人名}生於」），解決自定年譜「{年}干支{月日時}。{名}生於」出生條目
     birth_no_person = (
         r'(?:' + ap + r')?(?:' + ar + r')?'  # 前綴（含年號）
         + y + r'年(?:' + sb + r')?'           # N年 + 可選干支
-        + r'[^。]{0,120}?生於'                 # 中間最多120字 + 生於（原為60）
+        + r'(?:'                                # 兩分支：
+        + r'[^。\n]{0,120}?'                    #  ① 直接生於（不跨句號，原為60）
+        + r'|[^。\n]{0,60}?。[^。\n]{0,60}?'     #  ② 跨一句號（…戌時。兆鏞生於）
+        + r')'
+        + r'(?<!先)生於'                        # 生於
     )
 
-    # 年份條目（有干支，無先生/公前綴，澄懷主人風格）
-    # 匹配：十二年癸丑二歲 ／ 雍正元年癸卯五十二歲
-    # 也支援年與干支間有逗號：十年，壬子六十一歲
+    # 年份條目（有干支，無先生/公前綴，澄懷主人/殷譜經風格）
+    # 匹配：十二年癸丑二歲 ／ 雍正元年癸卯五十二歲 ／ 光緖元年乙亥，年七十歳
+    # 也支援年與干支間有逗號：十年，壬子六十一歲 ／ 五年。丙寅六十一歲
+    # 年齡後綴必備 + 可選「年」前綴，避免把「嘉慶十一年丙寅十月」中的「十」誤判為年齡
     entry_sb_no_person = (
         r'(?:' + ap + r')?(?:' + ar + r')?'  # 可選前綴（皇帝廟號+年號）
         + y + r'年[，,、。]?' + sb              # N年 + 可選標點 + 干支
         + r'[，,、。]?\s*'                      # 可選標點
-        + an + as_                              # 年齡數字 + 嵗/歲
+        + r'(?:年)?'                            # 可選「年」前綴（光緖元年乙亥，年七十歳）
+        + an + as_required                      # 年齡數字 + 嵗/歲（後綴必備）
         + r'[，。、]?'                           # 消耗年齡後綴後的標點
     )
 
@@ -987,6 +1117,51 @@ def _build_full_pattern():
         + r'|' + birth_direct + r'|' + entry_sb_direct
         + r'|' + birth_no_person + r'|' + entry_sb_no_person + r')'
     )
+
+
+def annotate_ad_years(text):
+    """在 ### 標題的干支後標註公元年：嘉慶十一年丙寅 → 嘉慶十一年丙寅（1806年）。
+
+    對所有含年號+年序的標題行計算公元年並插入「（YYYY年）」。
+    年號不在 REIGN_START_YEARS 表、或無年序的標題（如純干支「丙申，公四十一嵗」）保持原樣。
+    """
+    y = _build_year_pattern()
+    # 標題開頭：(### ) + [廟號前綴?] + [年號?] + N年 + [干支?]
+    head_pat = re.compile(
+        r'^(?:' + '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES) + r')?'
+        + r'(?:' + '|'.join(re.escape(r) for r in REIGNS) + r')?'
+    )
+    yr_pat = re.compile(r'(' + y + r'年)(?:' + STEM_BRANCH + r')?')
+
+    lines = []
+    for line in text.split('\n'):
+        if line.startswith('### '):
+            head = line[4:]
+            hm = head_pat.match(head)
+            reign = None
+            rest = head
+            if hm:
+                rest = head[hm.end():]
+                # 從標題開頭往後找年號（優先完整匹配，含廟號前綴）
+                for r in REIGNS:
+                    if head.startswith(r):
+                        reign = r
+                        rest = head[len(r):]
+                        break
+                else:
+                    for p, r in EMPEROR_PREFIXES:
+                        if p and head.startswith(p) and head[len(p):].startswith(r):
+                            reign = r
+                            rest = head[len(p) + len(r):]
+                            break
+            ym = yr_pat.match(rest)
+            if reign and ym:
+                ad = _compute_ad_year(reign, ym.group(1)[:-1])  # 去掉「年」字
+                if ad:
+                    insert_at = 4 + len(head) - len(rest) + len(ym.group(0))
+                    line = line[:insert_at] + f'（{ad}年）' + line[insert_at:]
+        lines.append(line)
+    return '\n'.join(lines)
 
 
 def process_nianpu(text):
@@ -1008,7 +1183,8 @@ def process_nianpu(text):
             return ''
 
         # 出生條目：在第一個句號處截斷（僅保留干支+年號+年）
-        is_birth = '生於' in raw or '公生' in raw
+        # 「先生於」中的「生於」不是出生標記（(?<!先)排除）
+        is_birth = bool(re.search(r'(?<!先)生於', raw)) or '公生' in raw
         if is_birth and '。' in raw:
             raw = raw.split('。')[0]
 
@@ -1041,6 +1217,8 @@ def process_nianpu(text):
     result = _merge_broken_lines(result)
     result = _split_embedded_years(result)
     result = split_by_month(result)
+    # 在標題上標註公元年：嘉慶十一年丙寅 → 嘉慶十一年丙寅（1806年）
+    result = annotate_ad_years(result)
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip() + '\n'
 
@@ -1051,6 +1229,8 @@ def verify_output(original_text, result):
     比對原始文本中所有「N年干支 + 先生N歲」組合與輸出 ### 標題，
     列出遺漏的年份條目及異常情況。
     """
+    # 年號字形先正規化（光緖→光緒），避免比對時因字形變體誤報遺漏
+    original_text = _normalize_reign_variants(original_text)
     y = _build_year_pattern()
     sb = STEM_BRANCH
     an = AGE_DIGITS
@@ -1232,6 +1412,13 @@ def verify_output(original_text, result):
 
 # ======== 命令列 ========
 def main():
+    # Windows 控制台編碼修正：統一以 UTF-8 輸出，避免中文亂碼/空輸出
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
     if len(sys.argv) < 2:
         print(__doc__); sys.exit(1)
 
