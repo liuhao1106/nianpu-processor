@@ -1,4 +1,4 @@
-# 年譜整理工具 / Nianpu Processor
+# 年譜整理工具 / nianpu-processor
 
 一鍵處理原始古籍刻本 OCR 後的中國年譜文本、或從識典古籍等下載的年譜文本，自動按年份切分、補全年號、整理段落。支援明清兩代及南明年號，具備自我進化能力。
 
@@ -23,7 +23,7 @@
 
 ```bash
 # 下載腳本
-wget https://raw.githubusercontent.com/<你的用戶名>/nianpu/main/nianpu_processor.py
+wget https://raw.githubusercontent.com/<你的用戶名>/nianpu-processor/main/nianpu_processor.py
 
 # 直接執行（需要 Python 3.6+）
 python nianpu_processor.py <輸入檔案> [輸出檔案]
@@ -31,10 +31,10 @@ python nianpu_processor.py <輸入檔案> [輸出檔案]
 
 ### Claude Code 用戶
 
-將此目錄放入 `~/.claude/skills/nianpu/`，然後在 Claude Code 中使用：
+將此目錄放入 `~/.claude/skills/nianpu-processor/`，然後在 Claude Code 中使用：
 
 ```
-/nianpu <輸入檔案路徑> [輸出檔案路徑]
+/nianpu-processor <輸入檔案路徑> [輸出檔案路徑]
 ```
 
 ## 快速開始

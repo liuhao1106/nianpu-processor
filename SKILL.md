@@ -1,9 +1,9 @@
 ---
-name: 年谱整理
-description: 年譜整理工具。將中國年譜（chronological biography）文本按年份切分、自動補全年號、整理段落。支援方柏堂（先生年N嵗）、萬清軒（直接年齡）、張清恪（公年N歲）、沈端恪（跨行年份+年齡）等多種格式。觸發詞：年譜、年谱、年月日、chronological biography、nianpu。
+name: nianpu-processor
+description: 年譜處理器（nianpu-processor）工具。將中國年譜（chronological biography）文本按年份切分、自動補全年號、整理段落。支援方柏堂（先生年N嵗）、萬清軒（直接年齡）、張清恪（公年N歲）、沈端恪（跨行年份+年齡）等多種格式。觸發詞：年譜、年谱、年月日、chronological biography、nianpu、nianpu-processor。
 ---
 
-# 年譜整理工具 /nianpu
+# 年譜整理工具 /nianpu-processor
 
 一鍵處理中國年譜文本，自動完成：
 1. 年份標題化 — `八年己巳，先生年五十二` → `### 八年己巳，先生年五十二`
@@ -26,7 +26,7 @@ description: 年譜整理工具。將中國年譜（chronological biography）�
 ## 用法
 
 ```bash
-/nianpu <輸入檔案路徑> [輸出檔案路徑]
+/nianpu-processor <輸入檔案路徑> [輸出檔案路徑]
 ```
 
 若不指定輸出檔，預設為輸入檔名加上 `_已整理`。
@@ -132,13 +132,13 @@ description: 年譜整理工具。將中國年譜（chronological biography）�
 
 ### 學習檔案
 
-存儲在 `~/.claude/skills/nianpu/learnings.json`，每次處理自動更新。
+存儲在 `~/.claude/skills/nianpu-processor/learnings.json`，每次處理自動更新。
 
 ### 查看學習狀態
 
 在終端執行：
 ```bash
-python ~/.claude/skills/nianpu/nianpu_processor.py --status
+python ~/.claude/skills/nianpu-processor/nianpu_processor.py --status
 ```
 
 每次處理完成後會自動打印自我進化報告。當某一新年號被發現 ≥2 次時，會被自動應用到後續處理中。
@@ -148,7 +148,7 @@ python ~/.claude/skills/nianpu/nianpu_processor.py --status
 也可在終端直接執行 Python 腳本：
 
 ```bash
-python ~/.claude/skills/nianpu/nianpu_processor.py <輸入檔> [輸出檔]
+python ~/.claude/skills/nianpu-processor/nianpu_processor.py <輸入檔> [輸出檔]
 ```
 
 ## 自訂配置
