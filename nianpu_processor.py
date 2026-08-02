@@ -47,7 +47,9 @@ REIGNS = [
     '嘉泰', '開禧', '嘉定', '寶慶', '紹定', '端平', '嘉熙', '淳祐', '寶祐',
     '開慶', '景定', '咸淳', '德祐', '景炎', '祥興',
     # 清代
-    '順治', '康熙', '雍正', '乾隆', '嘉慶', '道光', '咸豐', '同治', '光緖', '光緒',
+    '順治', '康熙', '雍正', '乾隆', '嘉慶', '道光', '咸豐', '同治', '光緖', '光緒', '光绪',
+    # 清末宣統、民國（近現代年譜；含簡/繁體）
+    '宣統', '宣统', '民國', '民国',
 ]
 
 EMPEROR_PREFIXES = [
@@ -66,9 +68,9 @@ EMPEROR_PREFIXES = [
 ]
 
 PERSON_PREFIXES = ['先生','公','府君']
-AGE_SUFFIXES = '嵗歲歳𡻕'
+AGE_SUFFIXES = '嵗歲歳𡻕岁'   # 含簡體「岁」（近現代/民國年譜用）
 AGE_SUFFIX_REQUIRED = '[' + AGE_SUFFIXES + ']'   # 年齡後綴必備（無稱謂格式用，避免誤配「六月」等月份/日期字）
-AGE_DIGITS = r'[十有和一二三四五六七八九十百零〇\d]+'
+AGE_DIGITS = r'[十有和一二三四五六七八九十百零〇廿卅\d]+'   # 含 廿/卅（廿一歲=21歲、卅二歲=32歲）
 
 # 各年號元年對應的公元年份（含異體字）。用於在標題上標註公元年，如 嘉慶十一年 → 1806年
 REIGN_START_YEARS = {
@@ -100,7 +102,9 @@ REIGN_START_YEARS = {
     '景炎': 1276, '祥興': 1278,
     # 清代
     '順治': 1644, '康熙': 1662, '雍正': 1723, '乾隆': 1736, '嘉慶': 1796,
-    '道光': 1821, '咸豐': 1851, '同治': 1862, '光緖': 1875, '光緒': 1875,
+    '道光': 1821, '咸豐': 1851, '同治': 1862, '光緖': 1875, '光緒': 1875, '光绪': 1875,
+    # 清末宣統、民國（近現代年譜；含簡/繁體）
+    '宣統': 1909, '宣统': 1909, '民國': 1912, '民国': 1912,
 }
 
 # 中文數字→整數
@@ -111,9 +115,15 @@ _CN_NUM = {
 
 
 def _chinese_year_to_int(s):
-    """中文數字年份（元/一~九/十/十一~十九/二十~九十九/十有一）轉為整數。"""
+    """中文數字年份（元/一~九/十/十一~十九/二十~九十九/十有一/廿/卅）轉為整數。"""
     if s == '元':
         return 1
+    if s.startswith('廿'):      # 廿=20、廿一=21…
+        rest = s[1:]
+        return 20 + (_chinese_year_to_int(rest) if rest else 0)
+    if s.startswith('卅'):      # 卅=30、卅二=32…
+        rest = s[1:]
+        return 30 + (_chinese_year_to_int(rest) if rest else 0)
     total = 0
     cur = 0
     for ch in s:
@@ -130,6 +140,17 @@ def _chinese_year_to_int(s):
         # 「有」「和」等連接詞直接略過
     total += cur
     return total if total > 0 else None
+
+
+def _chinese_digits_to_int(s):
+    """中文數字逐位轉整數（公元年格式，如 一八七三=1873、一九五零=1950）。"""
+    mapping = {'零': 0, '〇': 0, '一': 1, '二': 2, '三': 3, '四': 4,
+               '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
+    result = 0
+    for ch in s:
+        if ch in mapping:
+            result = result * 10 + mapping[ch]
+    return result if s else None
 
 
 def _compute_ad_year(reign, year_str):
@@ -776,13 +797,24 @@ def _build_year_pattern():
         '六十','六十一','六十二','六十三','六十四','六十五','六十六',
         '六十七','六十八','六十九','七十',
         '十有一','十有二','十有三','十有四','十有五','十有六','十有七','十有八','十有九',
+        # 廿/卅（近現代年譜：民國廿二年、光緒卅四年、廿一歲）
+        '廿','廿一','廿二','廿三','廿四','廿五','廿六','廿七','廿八','廿九',
+        '卅','卅一','卅二','卅三','卅四','卅五','卅六','卅七','卅八','卅九',
     ]
-    return '(?:' + '|'.join(nums) + ')'
+    # 前一位不能是數字：防止把「一八七三年」中的「三」誤當年份（4位公元年內部數字）
+    return '(?<![一二三四五六七八九零〇])' + '(?:' + '|'.join(nums) + ')'
 
 
 def extract_reign(heading):
     """從標題行中提取年號。"""
     h = heading.strip()
+    # 公元年格式（近現代年譜）：公元一八七三年，同治十二年，岁次癸酉，一歲
+    # 年號在標題中段（同治/光绪/宣統/民國…），返回該年號，避免被當成無年號而錯誤補上前一年號
+    if h.startswith('公元'):
+        m = re.search(r'(' + '|'.join(REIGNS) + r')' + _build_year_pattern() + r'年', h)
+        if m:
+            return m.group(1), h[m.end():]
+        return None, h
     for prefix, reign in EMPEROR_PREFIXES:
         if h.startswith(prefix):
             r = h[len(prefix):]
@@ -1112,8 +1144,20 @@ def _build_full_pattern():
         + r'[，。、]?'                           # 消耗年齡後綴後的標點
     )
 
+    # 公元年格式（近現代/民國年譜）：公元一八七三年，同治十二年，岁次癸酉，一岁。
+    # 公元N年（3-4位中文數字）+ 可選年號年（同治十二年/民國元年/宣統三年）+ 可選岁次干支 + N岁（後綴必備）
+    # 必須有年齡，避免誤切世系簡述等「公元N年」無年齡的敘述
+    ad_years = r'[一二三四五六七八九零〇]{3,4}'
+    ad_entry = (
+        r'公元' + ad_years + r'年'
+        + r'(?:，?' + r'(?:' + ar + r')' + y + r'年)?'   # 可選：年號年
+        + r'(?:，?岁次' + sb + r')?'                      # 可選：岁次干支
+        + r'，?' + an + as_required                       # 年齡（後綴必備）
+        + r'[。，]?'                                       # 消耗結尾標點
+    )
+
     return re.compile(
-        r'(?:' + birth + r'|' + entry_sb + r'|' + entry_no_sb
+        r'(?:' + ad_entry + r'|' + birth + r'|' + entry_sb + r'|' + entry_no_sb
         + r'|' + birth_direct + r'|' + entry_sb_direct
         + r'|' + birth_no_person + r'|' + entry_sb_no_person + r')'
     )
@@ -1137,6 +1181,17 @@ def annotate_ad_years(text):
     for line in text.split('\n'):
         if line.startswith('### '):
             head = line[4:]
+            # 公元年格式標題：公元一八七三年，同治十二年，岁次癸酉，一岁
+            # → 公元一八七三年（1873年），同治十二年，岁次癸酉，一岁
+            if head.startswith('公元'):
+                ad_m = re.match(r'公元([一二三四五六七八九零〇]+)年', head)
+                if ad_m:
+                    ad = _chinese_digits_to_int(ad_m.group(1))
+                    if ad:
+                        insert_at = 4 + len('公元' + ad_m.group(1) + '年')
+                        line = line[:insert_at] + f'（{ad}年）' + line[insert_at:]
+                lines.append(line)
+                continue
             hm = head_pat.match(head)
             reign = None
             rest = head
@@ -1205,9 +1260,10 @@ def process_nianpu(text):
         r, _ = extract_reign(heading)
         if r and r not in ('', None):
             reign_state[0] = r
-        elif reign_state[0] and not any(
+        elif (reign_state[0] and not any(
             heading.startswith(rr) for rr in REIGNS
-        ):
+        ) and not heading.startswith('公元')):
+            # 公元年格式標題（如 公元一九五零年）本身即為完整年份，不補上年號
             heading = reign_state[0] + heading
 
         return '\n### ' + heading + '\n'
@@ -1246,9 +1302,11 @@ def verify_output(original_text, result):
                 return True
         return False
 
-    # === 1. 在原始文本中找出所有年份+年齡（含無稱謂前綴格式） ===
+    # === 1. 在原始文本中找出所有年份+年齡（含無稱謂前綴格式與公元年格式） ===
+    ad_marker = r'公元[一二三四五六七八九零〇]{3,4}年'   # 公元一八七三年…
     raw_entry_pat = re.compile(
-        r'((?:' + ap + r')?(?:' + ar + r')?' + y + r'年[，,、。]?(?:' + sb + r')?)'
+        r'((?:' + ap + r')?(?:' + ar + r')?' + y + r'年[，,、。]?(?:' + sb + r')?'
+        + r'|' + ad_marker + r')'
         + r'[^\n]{0,200}?'
         + r'(?:' + person + r'(?:年)?\s*)?' + an + as_
     )
@@ -1308,6 +1366,12 @@ def verify_output(original_text, result):
 
     def chinese_num_to_int(s):
         """將中文數字轉為整數（簡單版本）。"""
+        if s.startswith('廿'):      # 廿=20、廿一=21…
+            rest = s[1:]
+            return 20 + (chinese_num_to_int(rest) if rest else 0)
+        if s.startswith('卅'):      # 卅=30、卅二=32…
+            rest = s[1:]
+            return 30 + (chinese_num_to_int(rest) if rest else 0)
         total = 0
         if '十' in s:
             parts = s.split('十')
@@ -1344,7 +1408,9 @@ def verify_output(original_text, result):
             if prev_reign and r != prev_reign:
                 reign_issues.append(f"年號切換：{prev_reign} → {r}（{h[:20]}...）")
             prev_reign = r
-        elif not head_starts_with_reign(h) and prev_reign:
+        elif (not head_starts_with_reign(h) and prev_reign
+              and not h.startswith('公元')):
+            # 公元年標題（如 公元一九五零年）無年號屬正常，不報缺年號
             reign_issues.append(f"缺年號：{h[:20]}...，應爲{prev_reign}")
 
     # === 6. 輸出報告 ===
