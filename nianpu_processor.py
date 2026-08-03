@@ -32,7 +32,7 @@ LEARNINGS_FILE = SKILL_DIR / 'learnings.json'
 REIGNS = [
     # 明代
     '洪武', '建文', '永樂', '洪熙', '宣德', '正統', '景泰', '天順', '成化',
-    '弘治', '正德', '嘉靖', '隆慶', '萬厯', '萬曆', '泰昌', '天啟', '崇禎',
+    '弘治', '正德', '嘉靖', '隆慶', '萬厯', '萬曆', '萬厤', '泰昌', '天啟', '崇禎',
     # 南明
     '隆武', '永厯', '永曆', '宏光', '弘光', '紹武',
     # 元代
@@ -65,6 +65,8 @@ EMPEROR_PREFIXES = [
     ('今上','光緖'),
     ('大淸',''),('大清',''),   # 大清是年號前綴，實際年號跟在其後
     ('明',''),                  # 明是年號前綴，實際年號跟在其後
+    # 宋代皇帝前綴（朱熹年譜：宋高宗建炎、孝宗隆興、光宗紹熙、寧宗慶元）
+    ('宋高宗','建炎'),('孝宗','隆興'),('光宗','紹熙'),('寧宗','慶元'),
 ]
 
 PERSON_PREFIXES = ['先生','公','府君']
@@ -78,7 +80,7 @@ REIGN_START_YEARS = {
     '洪武': 1368, '建文': 1399, '永樂': 1403, '洪熙': 1425, '宣德': 1426,
     '正統': 1436, '景泰': 1450, '天順': 1457, '成化': 1465, '弘治': 1488,
     '正德': 1506, '嘉靖': 1522, '隆慶': 1567,
-    '萬厯': 1573, '萬曆': 1573,
+    '萬厯': 1573, '萬曆': 1573, '萬厤': 1573,
     '泰昌': 1620, '天啟': 1621, '崇禎': 1628,
     # 南明
     '隆武': 1645, '永厯': 1647, '永曆': 1647,
@@ -164,9 +166,10 @@ def _compute_ad_year(reign, year_str):
     return start + n - 1
 
 # 天干地支（精確匹配，避免誤配「正月」「八月」）
-# 包含常見OCR變體：已（U+5DF2）代替己（U+5DF1）和巳（U+5DF3）
+# 包含常見OCR變體：已（U+5DF2）代替己（U+5DF1）和巳（U+5DF3）、戍（U+620D）代替戌（U+620C）、
+# 戊（U+620A，本為天干，古籍偶誤刻為地支「戌」）亦收作戌之變體
 _TG = '甲乙丙丁戊己已庚辛壬癸巳'
-_DZ = '子丑寅卯辰巳已午未申酉戌亥'
+_DZ = '子丑寅卯辰巳已午未申酉戌戍戊亥'
 STEM_BRANCH = r'[' + _TG + r'][' + _DZ + r']'
 
 SEASON_MARKERS = [
@@ -174,6 +177,13 @@ SEASON_MARKERS = [
     '秋七月','秋八月','秋九月','冬十月','冬十一月','冬十二月',
     '是年','先是',
 ]
+# 季節複合詞排除：裸季節字後緊跟這些字時不切分（秋闈=鄉試、冬至=節氣、春秋=經書、春仲=仲春、春日/春闈…）
+_SEASON_EXCLUDE_CONTINUATION = {
+    '春': '秋日仲闈試',
+    '夏': '至',
+    '秋': '闈日試',
+    '冬': '至日',
+}
 # 月份/季節分段用
 _SEASONS = ['春', '夏', '秋', '冬']
 _SEASON_MONTHS = {
@@ -184,6 +194,37 @@ _SEASON_MONTHS = {
 }
 
 EVENT_MARKERS = ['書至','將南歸']  # 非季節的事件標記，用於段落合併邊界
+
+# ======== 干支→60週期索引（三錨點一致性檢查用） ========
+# 甲子=0、乙丑=1、…、癸亥=59。已(U+5DF2)同時是 己/巳 的OCR變體，一律視為索引5（己、巳皆為5）
+_STEMS_CANON = '甲乙丙丁戊己庚辛壬癸'
+_BRANCHES_CANON = '子丑寅卯辰巳午未申酉戌亥'
+_STEM_IDX = {'甲':0,'乙':1,'丙':2,'丁':3,'戊':4,'己':5,'已':5,'庚':6,'辛':7,'壬':8,'癸':9}
+_BRANCH_IDX = {'子':0,'丑':1,'寅':2,'卯':3,'辰':4,'巳':5,'已':5,'午':6,'未':7,'申':8,'酉':9,'戌':10,'戍':10,'戊':10,'亥':11}
+_GANZHI_INDEX = {}   # '甲子'→0 … '癸亥'→59
+for _i in range(60):
+    _GANZHI_INDEX[_STEMS_CANON[_i % 10] + _BRANCHES_CANON[_i % 12]] = _i
+
+
+def _ganzhi_index_of_pair(pair):
+    """解析 2 字干支（含已/己/巳 變體）→ 60 週期索引；無法解析回傳 None。"""
+    if len(pair) != 2:
+        return None
+    si = _STEM_IDX.get(pair[0])
+    bi = _BRANCH_IDX.get(pair[1])
+    if si is None or bi is None:
+        return None
+    for i in range(60):
+        if i % 10 == si and i % 12 == bi:
+            return i
+    return None
+
+
+def _ganzhi_pair_of_ad(ad_year):
+    """公元年 → 該年干支（甲子=公元4年，週期60）。"""
+    i = (ad_year - 4) % 60
+    return _STEMS_CANON[i % 10] + _BRANCHES_CANON[i % 12]
+
 
 # ======== OCR 容錯修正 ========
 
@@ -206,11 +247,31 @@ def _apply_ocr_fixes(text):
 
 
 # ======== 年號字形正規化 ========
-
+# 異體字依據《規範字與繁异体字不對等用法表》（文津學志，鮑國強）取「辨識相關」子集：
+#   0095 历：歷(异:歴厯)／曆(异:厤) → 萬曆/永曆 的 OCR 異體 厤厯歴暦 一律歸一為 曆
+#   0023 干：干支用「干」（規範），不處理
+#   0436 岁：歲(异:嵗) 已由 AGE_SUFFIXES 涵蓋
+#   其餘（煕/熙、啓/啟、佑/祐）為史籍/OCR 常見異體，屬同類問題，一併歸一
+# 注意：此處只正規化「辨識依賴」的年號字形；正文一律保留原樣，不做出版性繁简轉換
 _REIGN_NORMALIZATIONS = {
+    # 光緒系（緒/緖）
     '光緖': '光緒',
+    # 萬曆系（曆/厤/厯/歴/暦）
+    '萬厤': '萬曆',
     '萬厯': '萬曆',
+    '萬歴': '萬曆',
+    '萬暦': '萬曆',
+    # 永曆系（同曆族）
+    '永厤': '永曆',
     '永厯': '永曆',
+    '永歴': '永曆',
+    # 康熙（熙/煕）
+    '康煕': '康熙',
+    # 天啟（啟/啓）
+    '天啓': '天啟',
+    # 嘉祐、元祐（祐/佑）
+    '嘉佑': '嘉祐',
+    '元佑': '元祐',
 }
 
 def _normalize_reign_variants(text):
@@ -354,8 +415,13 @@ def _is_valid_reign_candidate(candidate):
     # 不能是純數字或數字相關
     if all(c in '一二三四五六七八九十百千萬零' for c in candidate):
         return False
-    # 不能含標點
-    if re.search(r'[。，、！？；：〔〕「」『』（）\[\]《》〈〉""''，、\s]', candidate):
+    # 不能以中文數字結尾（「人十」「以五十」「至一八九」等數字碎片）
+    if candidate[-1] in '一二三四五六七八九十百千零〇廿卅':
+        return False
+    # 不能含標點/引號/空白
+    if re.search(r'[。，、！？；：〔〕「」『』（）\[\]《》〈〉\s]', candidate):
+        return False
+    if '"' in candidate or "'" in candidate:
         return False
     # 不能含年歲嵗等表示時間的字
     if any(c in candidate for c in '年歲嵗'):
@@ -443,6 +509,9 @@ def _discover_reigns(text):
     # 計算置信度並過濾低置信度候選
     result = {}
     for candidate, count in found.items():
+        # 出現 <2 次證據不足，不收錄（杜絕「人十」「以五十」等單次碎片進學習庫）
+        if count < 2:
+            continue
         confidence = _compute_reign_confidence(candidate, text, count)
         # 置信度 < 0.2 的跳過
         if confidence < 0.2:
@@ -1001,9 +1070,18 @@ def _build_all_labels():
     return all_labels
 
 
+def _is_season_compound(content, m):
+    """裸季節字（春/夏/秋/冬）後緊跟複合詞續字（如 秋闈、冬至、春秋、春仲）時，不當季節分段。"""
+    label = m.group(1)
+    if label not in _SEASONS:
+        return False
+    nxt = content[m.end():m.end() + 1]
+    return nxt in _SEASON_EXCLUDE_CONTINUATION.get(label, '')
+
+
 def _process_year_content(content, all_labels, pattern):
     """處理一年內的內容，按季節分段並以 **標籤** 標記。"""
-    matches = list(pattern.finditer(content))
+    matches = [m for m in pattern.finditer(content) if not _is_season_compound(content, m)]
     if not matches:
         return content
 
@@ -1058,8 +1136,62 @@ def _process_year_content(content, all_labels, pattern):
     return '\n\n'.join(output)
 
 
-def _build_full_pattern():
-    """構建用於全文替換的正則表達式（匹配年份+年齡，替換為###標題）。"""
+def classify_format(text):
+    """偵測年譜格式族，決定套用哪些年份 pattern 子集，降低誤配率。
+
+    二元特徵：
+      person    — 有「先生/公/府君〔年〕N嵗」（方柏堂/張清恪/府君風格）
+      no_person — 有「N年干支…N嵗」無稱謂直接年齡（萬清軒/澄懷主人/顧亭林風格）
+      ad        — 含「公元N年」（近現代/民國年譜）
+    回傳 dict；兩個 count 皆 >0 表示混合格式（套用全部 pattern）。
+    """
+    y = _build_year_pattern()
+    sb = STEM_BRANCH
+    an = AGE_DIGITS
+    as_req = AGE_SUFFIX_REQUIRED
+    person = '(?:' + '|'.join(PERSON_PREFIXES) + r')'
+    reign_alt = '|'.join(REIGNS)
+    emp_alt = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
+
+    # 有稱謂：先生/公/府君 [年] N嵗
+    person_age = re.compile(person + r'(?:年)?\s*' + an + as_req)
+    n_person = len(person_age.findall(text))
+
+    # 無稱謂：N年[標點]干支[標點][年]N嵗（年齡緊接干支，避免誤配「，先生年N嵗」）
+    no_person_age = re.compile(
+        r'(?:' + emp_alt + r')?(?:' + reign_alt + r')?' + y + r'年[，,、。]?' + sb
+        + r'[，,、。]?\s*(?:年)?' + an + as_req
+    )
+    n_no_person = len(no_person_age.findall(text))
+
+    n_ad = len(re.findall(r'公元[一二三四五六七八九零〇]{3,4}年', text))
+
+    # 無年齡純年份（朱熹年譜風格）：(前綴)?(年號)?N年干支 於行首/句末
+    # 干支必備，避免誤配正文年份引用（如「淳熙元年，始拜命」無干支）
+    bare_pat = re.compile(
+        r'(?:^|(?<=[。！？；〕\n]))\s*'
+        + r'(?:' + emp_alt + r')?(?:' + reign_alt + r')?'
+        + y + r'年' + sb
+    )
+    n_bare = len(bare_pat.findall(text))
+
+    return {
+        'person': n_person > 0,
+        'no_person': n_no_person > 0,
+        'ad': n_ad > 0,
+        'bare': n_bare >= 5,
+        '_counts': (n_person, n_no_person, n_ad, n_bare),
+    }
+
+
+def _build_full_pattern(fmt=None):
+    """構建用於全文替換的正則表達式（匹配年份+年齡，替換為###標題）。
+
+    fmt: classify_format() 的結果。為 None 時套用全部 8 種 pattern（相容舊行為）；
+    指定後只套用該格式族相關的子集（如 純無稱謂年譜 排除 有稱謂 pattern，
+    避免把正文「崇禎九年，巡按御史王公一…」中的「公一」誤當「公一歲」）。
+    若分類產生空集合，退回全部 pattern 以免漏切。
+    """
     y = _build_year_pattern()
     sb = STEM_BRANCH
     an = AGE_DIGITS
@@ -1078,9 +1210,10 @@ def _build_full_pattern():
     # 年份條目（有干支）
     # 匹配：可能前綴 + N年干支 + [最多120字，不含換行與句號] + 先生[年]N嵗
     # 中間文字限制不跨句號，防止一個條目吞噬其後的真實年份（如「道光元年辛巳三十一歲。府君…二年壬午三十二歲」）
+    # [，,、。]?\s* 容許干支後直接接句號的斷裂格式（如「四十五年丁巳。公八嵗」），與 entry_sb_no_person 一致
     entry_sb = (
         pp + y + r'年' + sb
-        + r'[^。\n]{0,120}?'             # 中間最多120字，不跨句號（原為60字）
+        + r'[，,、。]?\s*' + r'[^。\n]{0,120}?'  # 中間最多120字，不跨句號（原為60字）
         + person + r'(?:年)?\s*' + an + as_ # 先生[年]N嵗
         + r'[，。、]?'                    # 消耗年齡後綴後的標點
     )
@@ -1156,11 +1289,38 @@ def _build_full_pattern():
         + r'[。，]?'                                       # 消耗結尾標點
     )
 
-    return re.compile(
-        r'(?:' + ad_entry + r'|' + birth + r'|' + entry_sb + r'|' + entry_no_sb
-        + r'|' + birth_direct + r'|' + entry_sb_direct
-        + r'|' + birth_no_person + r'|' + entry_sb_no_person + r')'
+    # 無年齡純年份（朱熹年譜風格）：(前綴)?(年號)?N年干支，無年齡
+    # 匹配：紹興元年辛亥 ／ 四年甲寅 ／ 孝宗隆興元年癸未 ／ 光宗紹熙元年庚戍
+    # 限行首或句末/註文後，且干支必備（區分正文年份引用「淳熙元年，始拜命」）
+    # 放在 alternation 末尾：有年齡的條目（entry_sb_no_person 等）先匹配，避免此 pattern 搶走「N年干支」部分
+    entry_bare = (
+        r'(?:^|(?<=[。！？；〕\n]))\s*'      # 行首或句末/註文後
+        + r'(?:' + ap + r')?(?:' + ar + r')?'  # 可選前綴（皇帝廟號）+年號
+        + y + r'年' + sb                         # N年干支（干支必備）
+        + r'(?!' + an + r'[' + AGE_SUFFIXES + r'])'  # 排除緊接「N嵗/歲」的（已由 entry_sb_no_person 處理）
+        + r'[，,、。]?'                          # 消耗干支後標點（「二十六年丙子，七月」）
     )
+
+    # 依格式族選擇 pattern 子集（fmt=None 時全部套用）
+    # 出生 pattern（birth/birth_direct/birth_no_person）一律啟用：
+    #   1) 兩種格式（先生生 / 公生於 / 生於）的出生條目都會種下年號，若排除則後續條目
+    #      失去年號前綴（如羅忠節公「先生生」出生後，各條目丟失嘉慶年號與公元年註記）
+    #   2) 出生 pattern 均需「先生生/公生/生於」等特定動詞，誤配風險低
+    # 分類只決定「年份條目」pattern（有稱謂 entry_*  vs  無稱謂 entry_sb_no_person  vs  無年齡 entry_bare）
+    alts = []
+    if fmt is None or fmt.get('ad'):
+        alts.append(ad_entry)
+    alts.extend([birth, birth_direct, birth_no_person])
+    if fmt is None or fmt.get('person'):
+        alts.extend([entry_sb, entry_no_sb, entry_sb_direct])
+    if fmt is None or fmt.get('no_person'):
+        alts.append(entry_sb_no_person)
+    if fmt is None or fmt.get('bare'):
+        alts.append(entry_bare)   # 放末尾：有年齡條目優先
+    if not alts:   # 保險：分類異常導致空集合時退回全部，避免漏切
+        alts = [ad_entry, birth, entry_sb, entry_no_sb, birth_direct,
+                entry_sb_direct, birth_no_person, entry_sb_no_person, entry_bare]
+    return re.compile('(?:' + '|'.join(alts) + ')')
 
 
 def annotate_ad_years(text):
@@ -1268,7 +1428,9 @@ def process_nianpu(text):
 
         return '\n### ' + heading + '\n'
 
-    pat = _build_full_pattern()
+    # 格式預分類：只套用與本譜相關的 pattern 子集，降低誤配（L1）
+    fmt = classify_format(text)
+    pat = _build_full_pattern(fmt)
     result = pat.sub(insert, text)
     result = _merge_broken_lines(result)
     result = _split_embedded_years(result)
@@ -1321,6 +1483,15 @@ def verify_output(original_text, result):
         # 提取年份部分
         marker = m.group(1)
         raw_matches[marker] = {'age': age, 'heading': heading_raw}
+
+    # 排除「無干支 且 無年齡錨點」的正文年份引用（如卷末附錄/追述「三十八年，學使…」「同治二年，清釐戸管」）。
+    # 真實年份條目必有其一：干支（含出生條目，如 明萬曆三十八年庚戌…）或 年齡+後綴（如 先生N嵗/公二嵗）。
+    # 依「結構特徵」而非「卒年之後的位置」判斷，故年譜若把身後事作為正當條目（帶干支/年齡）編入，照常計入。
+    prose_year_refs = []
+    for marker, info in list(raw_matches.items()):
+        if info['age'] == '?' and not re.search(sb, marker):
+            prose_year_refs.append(marker)
+            del raw_matches[marker]
 
     # === 2. 從輸出中提取已處理的標題 ===
     output_headings = set()
@@ -1419,14 +1590,16 @@ def verify_output(original_text, result):
     report.append("年譜整理檢查報告")
     report.append("=" * 60)
 
-    # 覆蓋率
+    # 覆蓋率（封頂 100%：原始偵測可能少於輸出，如魏貞庵靠嵌入式年份拆分補出標題）
     total_raw = len(raw_matches)
     total_out = len(output_headings)
-    coverage = round(total_out / total_raw * 100, 1) if total_raw > 0 else 0
+    coverage = min(100.0, round(total_out / total_raw * 100, 1)) if total_raw > 0 else 0
     report.append(f"\n原始年份+年齡組合：{total_raw} 個")
     report.append(f"輸出 ### 標題：{total_out} 個")
     report.append(f"覆蓋率：{coverage}%")
     report.append(f"遺漏：{len(missed)} 個")
+    if prose_year_refs:
+        report.append(f"（已剔除無干支且無年齡錨點的正文年份引用 {len(prose_year_refs)} 個：{ '、'.join(prose_year_refs) }）")
 
     # 遺漏列表
     if missed:
@@ -1476,6 +1649,114 @@ def verify_output(original_text, result):
     return '\n'.join(report)
 
 
+# ======== L2：三錨點一致性檢查 ========
+def _parse_heading_anchors(heading):
+    """從 ### 標題行解析三個錨點：年號年→公元、干支、年齡。回傳 dict。"""
+    h = heading[4:].strip() if heading.startswith('### ') else heading.strip()
+    info = {'raw': h, 'reign_ad': None, 'ganzhi': None, 'ganzhi_idx': None,
+            'age': None, 'age_int': None}
+    # ① 年號+年序 → 公元
+    m = re.search(r'(' + '|'.join(REIGNS) + r')(' + _build_year_pattern() + r')年', h)
+    if m:
+        info['reign_ad'] = _compute_ad_year(m.group(1), m.group(2))
+    # ② 干支（取第一個）
+    gm = re.search(STEM_BRANCH, h)
+    if gm:
+        info['ganzhi'] = gm.group(0)
+        info['ganzhi_idx'] = _ganzhi_index_of_pair(gm.group(0))
+    # ③ 年齡（N嵗/歲，取第一個）
+    am = re.search(AGE_DIGITS + r'[' + AGE_SUFFIXES + r']', h)
+    if am:
+        age_s = re.sub(r'[' + AGE_SUFFIXES + r']$', '', am.group(0))
+        info['age'] = age_s
+        info['age_int'] = _chinese_year_to_int(age_s)
+    return info
+
+
+def verify_anchors(result):
+    """三錨點一致性檢查：每個標題交叉驗證 年號年→公元、干支→公元、年齡→公元。
+
+    ① 年號年→公元 vs 年齡→公元（出生年+歲-1）不符 → 年號誤配（如順治誤標崇禎）
+    ② 干支 vs 年齡→公元 不符 → 干支或年齡有誤
+    ③ 干支 vs 年號年→公元 不符（無年齡可用時）
+    ④ 相鄰標題年齡序列未逐年遞增 → 可能漏年/錯序
+
+    回傳 (suspects, seq_bad, birth_year, total)。
+    """
+    headings = [l for l in result.split('\n') if l.startswith('### ')]
+    parsed = [_parse_heading_anchors(l) for l in headings]
+    parsed = [p for p in parsed if p['reign_ad'] is not None or p['age_int'] is not None]
+
+    # 出生年共識：由「年號年→公元 − 年齡 + 1」多數決（1613、1662…）
+    birth_cands = [p['reign_ad'] - p['age_int'] + 1
+                   for p in parsed
+                   if p['reign_ad'] is not None and p['age_int'] is not None]
+    birth_year = None
+    if birth_cands:
+        from collections import Counter
+        birth_year = Counter(birth_cands).most_common(1)[0][0]
+
+    suspects = []
+    for p in parsed:
+        reasons = []
+        ad_age = (birth_year + p['age_int'] - 1
+                  if birth_year and p['age_int'] is not None else None)
+        # ① 年號年 vs 年齡
+        if p['reign_ad'] is not None and ad_age is not None and p['reign_ad'] != ad_age:
+            reasons.append(f"年號年→公元 {p['reign_ad']} ≠ 年齡→公元 {ad_age}")
+        # ② 干支 vs 年齡（出生年推定後）
+        if p['ganzhi_idx'] is not None and ad_age is not None:
+            exp = (ad_age - 4) % 60
+            if p['ganzhi_idx'] != exp:
+                reasons.append(
+                    f"干支{p['ganzhi']}(idx {p['ganzhi_idx']}) ≠ 年齡應為 {_ganzhi_pair_of_ad(ad_age)}(idx {exp})")
+        # ③ 干支 vs 年號年（無年齡可用時）
+        elif p['ganzhi_idx'] is not None and p['reign_ad'] is not None:
+            exp = (p['reign_ad'] - 4) % 60
+            if p['ganzhi_idx'] != exp:
+                reasons.append(
+                    f"干支{p['ganzhi']} ≠ 年號年應為 {_ganzhi_pair_of_ad(p['reign_ad'])}")
+        if reasons:
+            suspects.append((p['raw'], reasons))
+
+    # ④ 年齡序列連續性
+    seq_bad = []
+    prev = None
+    for p in parsed:
+        if p['age_int'] is None:
+            prev = None
+            continue
+        if prev is not None and prev['age_int'] is not None:
+            gap = p['age_int'] - prev['age_int']
+            if p['reign_ad'] is not None and prev['reign_ad'] is not None:
+                ygap = p['reign_ad'] - prev['reign_ad']
+                if gap != ygap and gap > 0:
+                    seq_bad.append(
+                        f"{prev['raw']} → {p['raw']}：年齡差 {gap} ≠ 年差 {ygap}")
+            elif gap <= 0:
+                seq_bad.append(f"{prev['raw']} → {p['raw']}：年齡未遞增（差 {gap}）")
+        prev = p
+
+    return suspects, seq_bad, birth_year, len(headings)
+
+
+def _format_anchor_report(result):
+    """格式化三錨點檢查報告文字。"""
+    suspects, seq_bad, birth_year, total = verify_anchors(result)
+    lines = ['── 三錨點一致性檢查 ──']
+    lines.append(f'  標題數：{total}；推定出生年：{birth_year if birth_year else "（無法推定）"}')
+    if not suspects and not seq_bad:
+        lines.append('  無可疑標題 ✓')
+    else:
+        for raw, reasons in suspects:
+            lines.append(f'  ⚠ {raw}')
+            for r in reasons:
+                lines.append(f'      └ {r}')
+        for s in seq_bad:
+            lines.append(f'  ⚠ {s}')
+    return '\n'.join(lines)
+
+
 # ======== 命令列 ========
 def main():
     # Windows 控制台編碼修正：統一以 UTF-8 輸出，避免中文亂碼/空輸出
@@ -1513,6 +1794,18 @@ def main():
         except UnicodeEncodeError: pass
         return
 
+    # --check 對既有整理檔跑三錨點一致性檢查（不需重新處理）
+    if sys.argv[1] == '--check':
+        if len(sys.argv) < 3:
+            print("用法：nianpu_processor.py --check <已整理.md>"); sys.exit(1)
+        cp = Path(sys.argv[2])
+        if not cp.exists():
+            print(f"錯誤：找不到檔案 {cp}"); sys.exit(1)
+        res = cp.read_text(encoding='utf-8')
+        try: print(_format_anchor_report(res))
+        except UnicodeEncodeError: pass
+        return
+
     # 載入歷史學習
     learn_changes = apply_learnings()
     if learn_changes:
@@ -1540,6 +1833,12 @@ def main():
     print()
     report_lines = verify_output(original, result).split('\n')
     for line in report_lines:
+        try: print(line)
+        except UnicodeEncodeError: print(f"  [包含罕用字]")
+
+    # L2：三錨點一致性檢查（年號年/干支/年齡 交叉驗證，輸出可疑標題）
+    print()
+    for line in _format_anchor_report(result).split('\n'):
         try: print(line)
         except UnicodeEncodeError: print(f"  [包含罕用字]")
 
