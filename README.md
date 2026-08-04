@@ -45,13 +45,25 @@ python nianpu_processor.py <輸入檔案> [輸出檔案]
 
 ### Claude Code 用戶
 
-將此目錄放入 `~/.claude/skills/nianpu-processor/`，然後在 Claude Code 中使用：
+將此目錄放入 `~/.claude/skills/nianpu-processor/` 後，Claude Code 會自動載入此 skill，**直接用自然語言下達命令即可**：
 
 ```
-/nianpu-processor <輸入檔案路徑> [輸出檔案路徑]
+/nianpu-processor <輸入檔案路徑> [輸出檔案路徑]        # 或直接說：「整理這個年譜」
+「把《顧亭林先生年譜》整理成 Markdown」
+「補全年號並標註公元年」
+「用 CBDB 核驗傳主生卒年，並修正年號誤標」
 ```
 
 ## 快速開始
+
+本工具設計為**可供各種 AI 智能體（Claude Code、Cursor、Copilot 等）直接用自然語言調用**——智能體讀取本文件與 `SKILL.md` 後，會自動解析意圖並執行底層 `nianpu_processor.py`，無需手動拼寫參數。例如：
+
+> 「整理這個年譜文件」→ 自動切分年份標題、補全年號、標註公元年
+> 「把《黃黎洲先生年譜》整理好」→ 指定檔案處理
+> 「核驗傳主生卒年並修正年號誤標」→ 觸發 `--cbdb`／`--fix`
+> 「檢查已整理檔的可疑標題」→ 觸發 `--check`
+
+亦可在終端直接執行腳本：
 
 ```bash
 # 處理年譜文件，輸出為「原檔名_已整理.md」

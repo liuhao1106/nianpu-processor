@@ -31,6 +31,15 @@ description: 年譜處理器（nianpu-processor）工具。將中國年譜（chr
 
 ## 用法
 
+本工具可供**各種 AI 智能體（Claude Code、Cursor、Copilot 等）直接用自然語言調用**——智能體讀取本 skill 後，會自動解析意圖並執行底層 `nianpu_processor.py`，無需用戶拼寫參數。例如：
+
+- 「整理這個年譜文件」→ 自動切分年份、補全年號、標註公元年
+- 「把《顧亭林先生年譜》整理成 Markdown」→ 指定檔案處理
+- 「核驗傳主生卒年並修正年號誤標」→ 觸發 `--cbdb`／`--fix`
+- 「檢查已整理檔的可疑標題」→ 觸發 `--check`
+
+亦可顯式使用斜線命令或終端執行：
+
 ```bash
 /nianpu-processor <輸入檔案路徑> [輸出檔案路徑]
 /nianpu-processor <輸入檔案路徑> [輸出檔案路徑] --cbdb <傳主名>        # CBDB 核驗生卒年 + 年號誤配建議
