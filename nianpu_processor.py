@@ -1766,6 +1766,214 @@ def _format_anchor_report(result):
     return '\n'.join(lines)
 
 
+# ======== CBDB 生卒年核驗與年號誤配自動修正 ========
+try:
+    from cbdb import get_person, extract_person_name as _cbdb_extract_name
+except Exception:
+    get_person = None
+    _cbdb_extract_name = None
+
+# 清系列年號：多個年號涵蓋同一公元年（明清之際）時，優先依清正朔標註
+_QING_REIGNS = ['順治', '康熙', '雍正', '乾隆', '嘉慶', '道光', '咸豐', '同治', '光緒', '宣統', '光绪', '宣统']
+
+# 年號終年（含）；未列者以元年+60 計。供年號誤配修正判斷「該年號是否真的涵蓋某公元年」
+REIGN_END_YEARS = {
+    '建炎': 1130, '紹興': 1162, '隆興': 1164, '乾道': 1173, '淳熙': 1189,
+    '紹熙': 1194, '慶元': 1200, '嘉泰': 1204, '開禧': 1207, '嘉定': 1224,
+    '寶慶': 1227, '紹定': 1233, '端平': 1236, '嘉熙': 1240, '淳祐': 1252,
+    '寶祐': 1258, '開慶': 1259, '景定': 1264, '咸淳': 1274, '德祐': 1276,
+    '景炎': 1278, '祥興': 1279,
+    '中統': 1264, '至元': 1294, '元貞': 1297, '大德': 1307, '至大': 1311,
+    '皇慶': 1313, '延祐': 1320, '至治': 1323, '泰定': 1328, '致和': 1328,
+    '天曆': 1330, '至順': 1333, '元統': 1335, '至正': 1368,
+    '洪武': 1398, '建文': 1402, '永樂': 1424, '洪熙': 1425, '宣德': 1435,
+    '正統': 1449, '景泰': 1456, '天順': 1464, '成化': 1487, '弘治': 1505,
+    '正德': 1521, '嘉靖': 1566, '隆慶': 1572, '萬厯': 1620, '萬曆': 1620,
+    '泰昌': 1620, '天啟': 1627, '崇禎': 1644,
+    '弘光': 1645, '隆武': 1646, '紹武': 1646, '永厤': 1662, '永曆': 1662,
+    '順治': 1661, '康熙': 1722, '雍正': 1735, '乾隆': 1795, '嘉慶': 1820,
+    '道光': 1850, '咸豐': 1861, '同治': 1874, '光緖': 1908, '光緒': 1908, '光绪': 1908,
+    '宣統': 1911, '宣统': 1911,
+    '民國': 1949, '民国': 1949,
+}
+
+
+def _reign_span(reign):
+    start = REIGN_START_YEARS.get(reign)
+    if start is None:
+        return None
+    return start, REIGN_END_YEARS.get(reign, start + 60)
+
+
+def reign_for_year(ad, current_reign=None):
+    """公元年 → 正確年號+年序。
+
+    優先沿用標題現年號（同一年號只改年序，如 道光十六→二十六年）——但僅在現年號
+    實際涵蓋 ad 時（崇禎止於 1644，故 1645 不再沿用崇禎而切換為順治）；
+    現年號不涵蓋時，取涵蓋 ad 的年號，清系列優先（顧亭林 1645 → 順治二年）。
+    回傳 (年號, 年序) 或 (None, None)。
+    """
+    if current_reign and current_reign in REIGN_START_YEARS:
+        s, e = _reign_span(current_reign)
+        if s <= ad <= e:
+            return current_reign, ad - s + 1
+    cands = []
+    for reign, start in REIGN_START_YEARS.items():
+        s, e = _reign_span(reign)
+        if s <= ad <= e:
+            cands.append((reign, ad - s + 1))
+    if not cands:
+        return None, None
+    for q in _QING_REIGNS:
+        for reign, n in cands:
+            if reign == q:
+                return reign, n
+    cands.sort(key=lambda x: REIGN_START_YEARS[x[0]], reverse=True)
+    return cands[0]
+
+
+def _int_to_chinese_year(n):
+    """年序整數 → 中文（1→元、10→十、26→二十六）。"""
+    _D = '零一二三四五六七八九'
+    if n == 1:
+        return '元'
+    if n < 10:
+        return _D[n]
+    if n == 10:
+        return '十'
+    if n < 20:
+        return '十' + _D[n % 10]
+    t, o = n // 10, n % 10
+    return _D[t] + '十' + (_D[o] if o else '')
+
+
+def suggest_fix(heading, birth, death):
+    """對單一標題行，依 CBDB 生卒年 + 干支/年齡 推定正確公元年並修正年號年序。
+
+    回傳修正後的標題行；無需修正或無法判定回傳 None。只動年號+年序+（公元註記），
+    干支/年齡/正文一律保留。
+    """
+    prefix = ''
+    h = heading
+    if h.startswith('### '):
+        prefix = '### '
+        h = h[4:].strip()
+    info = _parse_heading_anchors(h)
+    if info['reign_ad'] is None:
+        return None
+    age = info['age_int']
+    if age is None:
+        # 無「嵗」後綴的年齡（如張清恪「公年六十五」）：有稱謂（公/先生/府君）或「年N嵗」變體
+        for apat in (r'(?:公|先生|府君)(?:年)?(' + AGE_DIGITS + r')(?:[嵗歲歳𡻕岁]|[，,、。；;\n]|$)',
+                     r'(?:年)(' + AGE_DIGITS + r')[嵗歲歳𡻕岁]'):
+            m2 = re.search(apat, h)
+            if m2:
+                try:
+                    age = _chinese_year_to_int(m2.group(1))
+                    break
+                except Exception:
+                    age = None
+    # 保守原則：無年齡錨點不自動修（出生/干支誤刻類留人工）；
+    # 有年齡時以「虛歲→公元」為準，並以干支候選集佐證（避免跟錯干支、或 OCR 髒字誤讀年齡）。
+    if age is None or not birth:
+        return None
+    ad = birth + age - 1
+    if ad == info['reign_ad']:
+        return None  # 年號年本身正確（即便干支誤刻，也不動）
+    if info['ganzhi_idx'] is not None:
+        lo = (birth - 1) if birth else 1
+        hi = (death + 1) if death else (birth + 100)
+        cands = [y for y in range(lo, hi + 1) if (y - 4) % 60 == info['ganzhi_idx']]
+        if not cands or ad not in cands:
+            return None  # 干支無法佐證年齡（歧義/矛盾/OCR），不自動修
+    # 現行年號名（extract_reign 回傳 (年號, 其後文字)，不認「### 」前綴，故先剝離）
+    current_reign, rest = extract_reign(h)
+    reign, n = reign_for_year(ad, current_reign=current_reign)
+    if not reign:
+        return None
+    new_yr = _int_to_chinese_year(n)
+    m = re.match(_build_year_pattern() + r'年', rest)
+    if not m:
+        return None
+    old_part = (current_reign or '') + m.group(0)
+    new_part = reign + new_yr + '年'
+    if not current_reign or old_part not in h:
+        return None
+    fixed = h.replace(old_part, new_part, 1)
+    # 修（公元註記）
+    fixed = re.sub(r'（\d+年）', f'（{ad}年）', fixed, count=1)
+    return prefix + fixed if fixed != h else None
+
+
+def apply_fixes(result, fixes):
+    """把修正套用到整理結果文本（逐標題行替換）。"""
+    if not fixes:
+        return result
+    lines = result.split('\n')
+    out = []
+    for line in lines:
+        replaced = False
+        for old, new in fixes:
+            if line.startswith(old):
+                out.append(new)
+                replaced = True
+                break
+        if not replaced:
+            out.append(line)
+    return '\n'.join(out)
+
+
+def _cbdb_check(result, person):
+    """CBDB 核驗：輸出報告並回傳 (舊標題→新標題) 修正清單。"""
+    fixes = []
+    birth = person.get('birth') if person else None
+    death = person.get('death') if person else None
+    if not birth:
+        return fixes
+    lines_out = ['── CBDB 生卒年核驗 ──']
+    pname = person.get('name', '')
+    pid = person.get('id', '')
+    span = f'{birth}–{death}' if death else str(birth)
+    lines_out.append(f'  傳主：{pname}（{span}，CBDB#{pid}）')
+    # ① 出生年 vs 三錨點多數決
+    _, _, anchor_birth, _ = verify_anchors(result)
+    if anchor_birth:
+        diff = anchor_birth - birth
+        if diff == 0:
+            lines_out.append(f'  推定出生年 {anchor_birth}：與 CBDB 一致')
+        elif abs(diff) <= 1:
+            lines_out.append(f'  推定出生年 {anchor_birth} ≠ CBDB {birth}（差 {diff} 年，虛歲/源文本之別，以 CBDB 為準）')
+        else:
+            lines_out.append(f'  推定出生年 {anchor_birth} ≠ CBDB {birth}（差 {diff} 年，請複核）')
+    # ② 年譜是否止於卒前
+    if death:
+        max_ad = None
+        for h in [l for l in result.split('\n') if l.startswith('### ')]:
+            ad = _parse_heading_anchors(h)['reign_ad']
+            if ad and (max_ad is None or ad > max_ad):
+                max_ad = ad
+        if max_ad and max_ad < death - 2:
+            lines_out.append(f'  年譜止於 {max_ad}，CBDB 卒 {death}——自訂/自編年譜止於卒前 {death - max_ad} 年')
+    # ③ 逐條可疑標題建議修正
+    for h in [l for l in result.split('\n') if l.startswith('### ')]:
+        try:
+            fixed = suggest_fix(h, birth, death)
+        except Exception:
+            continue
+        if fixed:
+            fixes.append((h, fixed))
+    if fixes:
+        lines_out.append(f'  ⚠ 建議修正 {len(fixes)} 條（年號年序誤標，干支/年齡已自洽）：')
+        for old, new in fixes[:8]:
+            lines_out.append(f'    {old[4:]} → {new[4:]}')
+        if len(fixes) > 8:
+            lines_out.append(f'    … 尚有 {len(fixes) - 8} 條')
+    else:
+        lines_out.append('  無需修正 ✓')
+    print('\n'.join(lines_out))
+    return fixes
+
+
 # ======== 命令列 ========
 def main():
     # Windows 控制台編碼修正：統一以 UTF-8 輸出，避免中文亂碼/空輸出
@@ -1775,17 +1983,32 @@ def main():
     except Exception:
         pass
 
-    if len(sys.argv) < 2:
+    # --- 選項解析（--cbdb <傳主名>、--fix） ---
+    argv = sys.argv[1:]
+    fix_mode = '--fix' in argv
+    argv = [a for a in argv if a != '--fix']
+    cbdb_name = None
+    cbdb_requested = '--cbdb' in argv
+    if cbdb_requested:
+        i = argv.index('--cbdb')
+        nxt = argv[i + 1] if i + 1 < len(argv) else None
+        if nxt and not nxt.startswith('-') and not nxt.lower().endswith(('.md', '.txt')):
+            cbdb_name = nxt
+            del argv[i:i + 2]
+        else:
+            del argv[i]  # 空 --cbdb：自動從卷首提取傳主名
+
+    if not argv:
         print(__doc__); sys.exit(1)
 
     # --status 查看學習狀態
-    if sys.argv[1] == '--status':
+    if argv[0] == '--status':
         try: print(print_learnings_summary())
         except UnicodeEncodeError: pass
         return
 
     # --prune 清理無效學習
-    if sys.argv[1] == '--prune':
+    if argv[0] == '--prune':
         removed = prune_invalidated_learnings()
         total = sum(len(v) for v in removed.values())
         if total > 0:
@@ -1803,16 +2026,26 @@ def main():
         except UnicodeEncodeError: pass
         return
 
-    # --check 對既有整理檔跑三錨點一致性檢查（不需重新處理）
-    if sys.argv[1] == '--check':
-        if len(sys.argv) < 3:
-            print("用法：nianpu_processor.py --check <已整理.md>"); sys.exit(1)
-        cp = Path(sys.argv[2])
+    # --check 對既有整理檔跑三錨點一致性檢查（不需重新處理；可加 --cbdb 附核驗/修正建議）
+    if argv[0] == '--check':
+        if len(argv) < 2:
+            print("用法：nianpu_processor.py --check <已整理.md> [--cbdb <傳主名>]"); sys.exit(1)
+        cp = Path(argv[1])
         if not cp.exists():
             print(f"錯誤：找不到檔案 {cp}"); sys.exit(1)
         res = cp.read_text(encoding='utf-8')
         try: print(_format_anchor_report(res))
         except UnicodeEncodeError: pass
+        if cbdb_requested and get_person:
+            name = cbdb_name or (_cbdb_extract_name(res) if _cbdb_extract_name else None)
+            if name:
+                person = get_person(name)
+                if person and person.get('birth'):
+                    _cbdb_check(res, person)
+                elif person:
+                    print(f"▸ CBDB 有「{name}」但無生卒日期，跳過 CBDB 核驗")
+                else:
+                    print(f"▸ CBDB 查無「{name}」，跳過 CBDB 核驗")
         return
 
     # 載入歷史學習
@@ -1822,15 +2055,33 @@ def main():
         for c in learn_changes:
             print(f"  {c}")
 
-    inp = Path(sys.argv[1])
+    inp = Path(argv[0])
     if not inp.exists():
         print(f"錯誤：找不到檔案 {inp}"); sys.exit(1)
-    out = Path(sys.argv[2]) if len(sys.argv) >= 3 else inp.with_stem(
+    out = Path(argv[1]) if len(argv) >= 2 else inp.with_stem(
         inp.stem.replace('_完整','').replace('_全本','').replace('完整','').replace('全本','') + '_已整理'
     )
     print(f"讀取：{inp}")
     original = inp.read_text(encoding='utf-8')
     result = process_nianpu(original)
+
+    # CBDB 生卒年核驗 + 年號誤配自動修正
+    if cbdb_requested and get_person:
+        name = cbdb_name or (_cbdb_extract_name(original) if _cbdb_extract_name else None)
+        if name:
+            person = get_person(name)
+            if person and person.get('birth'):
+                fixes = _cbdb_check(result, person)
+                if fix_mode and fixes:
+                    result = apply_fixes(result, fixes)
+                    print(f"▸ 已自動修正 {len(fixes)} 條年號年序誤標（干支/年齡保留）")
+            elif person:
+                print(f"▸ CBDB 有「{name}」但無生卒日期，跳過 CBDB 核驗")
+            else:
+                print(f"▸ CBDB 查無「{name}」，跳過 CBDB 核驗")
+        else:
+            print("▸ 無法自動判定傳主名，跳過 CBDB 核驗（可用 --cbdb <傳主名> 指定）")
+
     out.write_text(result, encoding='utf-8')
     print(f"寫入：{out}")
     hs = [l for l in result.split('\n') if l.startswith('### ')]
