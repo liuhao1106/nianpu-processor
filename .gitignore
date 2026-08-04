@@ -2,3 +2,4 @@ learnings.json
 __pycache__/
 *.pyc
 cbdb_cache.json
+docs/nianpu_report_data.json
