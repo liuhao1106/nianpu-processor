@@ -301,6 +301,7 @@ def _split_embedded_years(text):
     as_required = AGE_SUFFIX_REQUIRED  # 後綴必備（無稱謂直接年齡格式）
     ap = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
     ar = '|'.join(REIGNS)
+    person = '(?:' + '|'.join(PERSON_PREFIXES) + r')'
 
     # 嵌入式模式：行首、或〔註文〕/句末標點後 接「(前綴)(年號)N年干支[標點][年]N歲」
     # 年齡後綴必備，避免把「同治十一年壬申六月」中的「六」誤切為年份標題
@@ -309,7 +310,7 @@ def _split_embedded_years(text):
         + r'(?:' + ap + r')?(?:' + ar + r')?'
         + y + r'年' + sb
         + r'[，,、。]?\s*'
-        + r'(?:年)?'
+        + r'(?:' + person + r')?(?:年)?'
         + an + as_required
         + r'[，。、]?'
     )
@@ -1306,7 +1307,7 @@ def _build_full_pattern(fmt=None):
         r'(?:^|(?<=[。！？；〕\n]))\s*'      # 行首或句末/註文後
         + r'(?:' + ap + r')?(?:' + ar + r')?'  # 可選前綴（皇帝廟號）+年號
         + y + r'年' + sb                         # N年干支（干支必備）
-        + r'(?!(?:[，,、。]?\s*(?:年)?)?' + an + r'[' + AGE_SUFFIXES + r'])'  # 排除緊接或間隔標點後接「N嵗/歲」的（避免從 entry_sb_no_person 搶走「N年干支，N歲」條目）
+        + r'(?!(?:[，,、。]?\s*)?(?:(?:' + person + r')?(?:年)?\s*)?' + an + r'[' + AGE_SUFFIXES + r'])'  # 排除緊接或間隔標點後接「[稱謂][年]N嵗/歲」的（避免搶走「N年干支，公年N歲」等有稱謂年齡條目）
         + r'[，,、。]?'                          # 消耗干支後標點（「二十六年丙子，七月」）
     )
 
