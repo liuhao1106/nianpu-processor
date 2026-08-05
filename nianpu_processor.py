@@ -48,6 +48,8 @@ REIGNS = [
     '開慶', '景定', '咸淳', '德祐', '景炎', '祥興',
     # 清代
     '順治', '康熙', '雍正', '乾隆', '嘉慶', '道光', '咸豐', '同治', '光緖', '光緒', '光绪',
+    # 清代簡體（現代學者年譜／簡體書刊）
+    '顺治', '乾隆', '嘉庆', '咸丰',
     # 清末宣統、民國（近現代年譜；含簡/繁體）
     '宣統', '宣统', '民國', '民国',
 ]
@@ -105,6 +107,8 @@ REIGN_START_YEARS = {
     # 清代
     '順治': 1644, '康熙': 1662, '雍正': 1723, '乾隆': 1736, '嘉慶': 1796,
     '道光': 1821, '咸豐': 1851, '同治': 1862, '光緖': 1875, '光緒': 1875, '光绪': 1875,
+    # 清代簡體（現代學者年譜／簡體書刊）
+    '顺治': 1644, '乾隆': 1736, '嘉庆': 1796, '咸丰': 1851,
     # 清末宣統、民國（近現代年譜；含簡/繁體）
     '宣統': 1909, '宣统': 1909, '民國': 1912, '民国': 1912,
 }
@@ -637,8 +641,8 @@ def self_learn(original_text, result, source_file='', report_lines=None):
                 'invalidated': False
             }
 
-    # 4. 統計處理結果
-    hs = [l for l in result.split('\n') if l.startswith('### ')]
+    # 4. 統計處理結果（現代學者年譜標題為 ####，一併統計）
+    hs = [l for l in result.split('\n') if l.startswith('### ') or l.startswith('#### ')]
     year_count = len(hs)
 
     # 從 report_lines 提取覆蓋率
@@ -1141,6 +1145,218 @@ def _process_year_content(content, all_labels, pattern):
     return '\n\n'.join(output)
 
 
+# ======== 現代學者年譜（已有年份標題）支援 ========
+# 格式家族：現代學者編年譜通常已有人工標好的年份標題，本工具「檢查年份標題是否全」
+# 而非重新匹配。兩種變體：
+#   A（年號在前）：#### 嘉慶十八年 癸酉 1813年 一岁
+#   B（公元在前）：#### 一九二三年（民國十二年癸亥）二十三歲
+
+
+def _parse_modern_components(body):
+    """從標題內容提取 年號年/干支/公元年/年齡 四錨點。回傳 dict（含 _spans）或 None。"""
+    # 公元年（阿拉伯 3-4 位 或 中文 4 位；不含「十」以免誤配年號年序「十二年」）
+    ad_m = re.search(r'(?:公元)?(?P<ad>[0-9]{3,4}|[一二三四五六七八九零〇]{3,4})\s*年', body)
+    # 年號 + 年序（嘉慶十八 / 民國十二 / 光緒三十）
+    r_m = re.search(r'(?P<reign>' + '|'.join(REIGNS) + r')(?P<ry>' + _build_year_pattern() + r')年', body)
+    # 干支
+    g_m = re.search(STEM_BRANCH, body)
+    # 年齡（N嵗/歲…，後綴必備）
+    a_m = re.search(r'(?P<age>' + AGE_DIGITS + r')(?P<suf>[' + AGE_SUFFIXES + r'])', body)
+    if not ad_m:
+        return None
+    if not (r_m or g_m or a_m):
+        return None
+    ad = ad_m.group('ad')
+    info = {
+        'reign': r_m.group('reign') if r_m else None,
+        'reign_year': r_m.group('ry') if r_m else None,
+        'ganzhi': g_m.group(0) if g_m else None,
+        'ad': ad,
+        'age': a_m.group('age') if a_m else None,
+        'age_suf': a_m.group('suf') if a_m else '',
+    }
+    info['ad_int'] = int(ad) if ad.isdigit() else _chinese_digits_to_int(ad)
+    info['reign_ad'] = (_compute_ad_year(info['reign'], info['reign_year'])
+                        if info['reign'] and info['reign_year'] else None)
+    info['ganzhi_idx'] = (_ganzhi_index_of_pair(info['ganzhi']) if info['ganzhi'] else None)
+    info['age_int'] = (_chinese_year_to_int(info['age']) if info['age'] else None)
+    # 變體：公元年在左（B）或年號年在左（A）
+    ad_pos = body.index(ad_m.group(0))
+    r_pos = body.index(r_m.group(0)) if r_m else len(body)
+    info['variant'] = 'B' if ad_pos < r_pos else 'A'
+    info['_spans'] = [m.span() for m in (ad_m, r_m, g_m, a_m) if m]
+    return info
+
+
+def try_parse_modern_heading(line, allow_plain=False):
+    """解析現代學者年譜標題行（已有標題，非待切分）。
+
+    同時支援 A（年號在前）與 B（公元在前）兩種變體；回傳 dict 或 None。
+    必須含公元年（阿拉伯 3-4 位 或 中文 4 位），且至少有年號年/干支/年齡之一，
+    以免把普通「公元N年」敘述或頁碼標題誤認成年份標題。
+
+    allow_plain=True 時亦接受無 # 前綴的純文字獨立年份行（如
+    「一九三六年（民國二十五年丙子）三十六歲」）——須「四錨點覆蓋整行」
+    （錨點之外餘留僅括號/空白）且行短，確保是獨立年份標題而非正文敘述。
+    """
+    m = re.match(r'^(?P<marker>#{2,4})\s*(?P<body>.*)$', line)
+    if m:
+        info = _parse_modern_components(m.group('body').strip())
+        if info is None:
+            return None
+        info['marker'] = m.group('marker')
+        info['raw'] = line
+        info['body'] = m.group('body').strip()
+        return info
+    if not allow_plain or line.startswith('#'):
+        return None
+    # 純文字獨立年份行：行短 + 四錨點覆蓋整行（餘留僅括號/空白）
+    if len(line) > 45:
+        return None
+    info = _parse_modern_components(line)
+    if info is None:
+        return None
+    covered = [False] * len(line)
+    for s, e in info['_spans']:
+        for i in range(max(0, s), min(e, len(line))):
+            covered[i] = True
+    for i, ch in enumerate(line):
+        if not covered[i] and ch not in '（）【】〔〕 　':
+            return None
+    info['marker'] = ''
+    info['raw'] = line
+    info['body'] = line
+    return info
+
+
+def _normalize_modern_heading(info):
+    """統一現代學者年譜標題格式（依變體重組為固定結構）。"""
+    reign_part = ''
+    if info['reign'] and info['reign_year']:
+        reign_part = info['reign'] + info['reign_year'] + '年'
+    gan = info['ganzhi'] or ''
+    ad_raw = info['ad'] + '年'
+    # 無年齡標題（如卒年/後事）不加後綴；有年齡才補嵗/歲
+    age_raw = ((info['age'] or '') + (info['age_suf'] or '歲')) if info['age'] else ''
+    if info['variant'] == 'A':
+        parts = [reign_part, gan, ad_raw, age_raw]
+        return info['marker'] + ' ' + ' '.join(p for p in parts if p)
+    # B：公元年（中文）+（年號年干支）+ 年齡
+    inner = reign_part + gan
+    return info['marker'] + ' ' + ad_raw + (f'（{inner}）' if inner else '') + age_raw
+
+
+def check_modern_headers(headers):
+    """現代學者年譜完整性檢查：推定出生年、三錨點交叉驗證、缺年清單。
+
+    「缺年」指公元年序列的空隙——現代學者年譜常因該年無事可記而略過，
+    故列出供人工確認，不自動補標題。
+    """
+    lines = []
+    birth_cands = [p['ad_int'] - p['age_int'] + 1
+                   for p in headers
+                   if p['ad_int'] is not None and p['age_int'] is not None]
+    birth = None
+    if birth_cands:
+        from collections import Counter
+        birth = Counter(birth_cands).most_common(1)[0][0]
+
+    lines.append('── 現代學者年譜（已有年份標題）完整性檢查 ──')
+    lines.append(f'  年份標題數：{len(headers)}')
+    if birth:
+        lines.append(f'  推定出生年：{birth}（公元年 − 年齡 + 1 多數決）')
+
+    no_age = [p for p in headers if p['age_int'] is None]
+    if no_age:
+        lines.append('  無年齡標題：' + '、'.join(p['raw'] for p in no_age))
+
+    # 三錨點（＋顯式公元年）交叉驗證
+    suspects = []
+    for p in headers:
+        reasons = []
+        if p['ad_int'] is not None and p['reign_ad'] is not None and p['ad_int'] != p['reign_ad']:
+            reasons.append(f'顯式公元 {p["ad_int"]} ≠ 年號年→公元 {p["reign_ad"]}')
+        if p['ad_int'] is not None and p['ganzhi_idx'] is not None:
+            exp = (p['ad_int'] - 4) % 60
+            if p['ganzhi_idx'] != exp:
+                reasons.append(f'干支{p["ganzhi"]} ≠ {p["ad_int"]}年應為 {_ganzhi_pair_of_ad(p["ad_int"])}')
+        if birth and p['age_int'] is not None and p['ad_int'] is not None:
+            exp_age = p['ad_int'] - birth + 1
+            if p['age_int'] != exp_age:
+                reasons.append(f'年齡 {p["age"]} ≠ 公元{p["ad_int"]}應為 {exp_age}歲')
+        if reasons:
+            suspects.append((p['raw'], reasons))
+    if suspects:
+        lines.append('  ⚠ 可疑標題（錨點不一致）：')
+        for raw, reasons in suspects:
+            lines.append(f'    {raw}')
+            for r in reasons:
+                lines.append(f'      └ {r}')
+    else:
+        lines.append('  ⚠ 可疑標題：無 ✓')
+
+    # 缺年清單（公元序列空隙）
+    ads = sorted({p['ad_int'] for p in headers if p['ad_int'] is not None})
+    if ads:
+        start, end = ads[0], ads[-1]
+        span = end - start + 1
+        lines.append(f'  覆蓋：{start}–{end}（有標題 {len(ads)} 年）')
+        lines.append(f'  覆蓋率：{round(len(ads) / span * 100, 1)}%（區間 {span} 年）')
+        missing = [y for y in range(start, end + 1) if y not in set(ads)]
+        if missing:
+            lines.append('  ── 缺年（無標題；可能該年無事可記，請人工確認）──')
+            for y in missing:
+                age = (y - birth + 1) if birth else None
+                if age:
+                    age_s = ('一' if age == 1 else _int_to_chinese_year(age)) + '歲'
+                else:
+                    age_s = ''
+                reign, rn = reign_for_year(y)
+                ry_s = (reign + _int_to_chinese_year(rn) + '年') if reign else ''
+                lines.append(f'    {y}年　{age_s}{"　" if age_s else ""}{ry_s}')
+        else:
+            lines.append('  ── 缺年：無 ✓')
+
+    return '\n'.join(lines)
+
+
+def process_modern_nianpu(text):
+    """現代學者年譜：不套用傳統年份匹配，只解析已有標題、統一格式、檢查完整性。
+
+    allow_plain=True：亦把無 # 前綴的純文字獨立年份行（如
+    「一九三六年（民國二十五年丙子）三十六歲」）提升為 #### 標題。
+    """
+    text = _normalize_reign_variants(text)
+    text = _apply_ocr_fixes(text)
+    headers = []
+    for ln, line in enumerate(text.split('\n'), 1):
+        info = try_parse_modern_heading(line, allow_plain=True)
+        if info is not None:
+            info['line'] = ln
+            headers.append(info)
+    # 標題層級統一：取多數決（劉熙載全為 ####；王欣夫以 #### 為主，##/### 參差者、
+    # 純文字行皆歸一；無 # 前綴時預設 ####）
+    canon = '####'
+    if headers:
+        from collections import Counter
+        marked = [h for h in headers if h['marker']]
+        if marked:
+            canon = Counter(h['marker'] for h in marked).most_common(1)[0][0]
+    out = []
+    idx = 0
+    for ln, line in enumerate(text.split('\n'), 1):
+        if idx < len(headers) and headers[idx]['line'] == ln:
+            info = headers[idx]
+            info['marker'] = canon
+            out.append(_normalize_modern_heading(info))
+            idx += 1
+        else:
+            out.append(line)
+    result = '\n'.join(out).strip() + '\n'
+    report = check_modern_headers(headers)
+    return result, report
+
+
 def classify_format(text):
     """偵測年譜格式族，決定套用哪些年份 pattern 子集，降低誤配率。
 
@@ -1185,12 +1401,21 @@ def classify_format(text):
     )
     n_bare = len(bare_pat.findall(text))
 
+    # 現代學者年譜：已有年份標題（年號N年 干支 公元年 年齡），非待切分。
+    # 判定：≥2 行能被 try_parse_modern_heading(allow_plain=True) 解析——
+    # 含帶 # 前綴標題與無 # 前綴的純文字獨立年份行（四錨點覆蓋整行）。
+    # 傳統年譜原始文本無公元年，不會誤觸發；已整理傳統檔的「（1806年）」在括號內，
+    # 因「公元年在干支後緊接」的要求而不被視為現代格式。
+    n_modern = sum(1 for line in text.split('\n')
+                   if try_parse_modern_heading(line, allow_plain=True) is not None)
+
     return {
         'person': n_person > 0,
         'no_person': n_no_person > 0,
         'ad': n_ad > 0,
         'bare': n_bare >= 5,
-        '_counts': (n_person, n_no_person, n_ad, n_bare),
+        'modern': n_modern >= 2,
+        '_counts': (n_person, n_no_person, n_ad, n_bare, n_modern),
     }
 
 
@@ -1394,7 +1619,14 @@ def process_nianpu(text):
 
     使用正則表達式全文查找年份+年齡組合，替換為 ### 標題行。
     標題中的〔〕註文會自動清理。
+
+    現代學者年譜（已有年份標題）另走 process_modern_nianpu：不做傳統匹配，
+    只統一格式並檢查標題是否全。回傳 (result, modern_report)，非現代格式時
+    modern_report 為 None。
     """
+    fmt = classify_format(text)
+    if fmt.get('modern'):
+        return process_modern_nianpu(text)
     # 年號字形正規化
     text = _normalize_reign_variants(text)
     # OCR 錯誤修正
@@ -1439,7 +1671,6 @@ def process_nianpu(text):
         return '\n### ' + heading + '\n'
 
     # 格式預分類：只套用與本譜相關的 pattern 子集，降低誤配（L1）
-    fmt = classify_format(text)
     pat = _build_full_pattern(fmt)
     result = pat.sub(insert, text)
     result = _merge_broken_lines(result)
@@ -1448,7 +1679,7 @@ def process_nianpu(text):
     # 在標題上標註公元年：嘉慶十一年丙寅 → 嘉慶十一年丙寅（1806年）
     result = annotate_ad_years(result)
     result = re.sub(r'\n{3,}', '\n\n', result)
-    return result.strip() + '\n'
+    return result.strip() + '\n', None
 
 
 def verify_output(original_text, result):
@@ -1661,10 +1892,15 @@ def verify_output(original_text, result):
 
 # ======== L2：三錨點一致性檢查 ========
 def _parse_heading_anchors(heading):
-    """從 ### 標題行解析三個錨點：年號年→公元、干支、年齡。回傳 dict。"""
-    h = heading[4:].strip() if heading.startswith('### ') else heading.strip()
+    """從 ###/#### 標題行解析錨點：年號年→公元、干支、年齡、顯式公元年。回傳 dict。"""
+    if heading.startswith('#### '):
+        h = heading[5:].strip()
+    elif heading.startswith('### '):
+        h = heading[4:].strip()
+    else:
+        h = heading.strip()
     info = {'raw': h, 'reign_ad': None, 'ganzhi': None, 'ganzhi_idx': None,
-            'age': None, 'age_int': None}
+            'age': None, 'age_int': None, 'ad_anchor': None, 'ad_anchor_int': None}
     # ① 年號+年序 → 公元
     m = re.search(r'(' + '|'.join(REIGNS) + r')(' + _build_year_pattern() + r')年', h)
     if m:
@@ -1680,6 +1916,12 @@ def _parse_heading_anchors(heading):
         age_s = re.sub(r'[' + AGE_SUFFIXES + r']$', '', am.group(0))
         info['age'] = age_s
         info['age_int'] = _chinese_year_to_int(age_s)
+    # ④ 顯式公元年（現代學者年譜：干支後接 1813年／一九二三年；排除（1806年）括號註記）
+    adm = re.search(r'(?<![（(])(?:公元)?(?P<aad>[0-9]{3,4}|[一二三四五六七八九零〇]{3,4})\s*年', h)
+    if adm:
+        a = adm.group('aad')
+        info['ad_anchor'] = a
+        info['ad_anchor_int'] = int(a) if a.isdigit() else _chinese_digits_to_int(a)
     return info
 
 
@@ -1693,14 +1935,18 @@ def verify_anchors(result):
 
     回傳 (suspects, seq_bad, birth_year, total)。
     """
-    headings = [l for l in result.split('\n') if l.startswith('### ')]
+    headings = [l for l in result.split('\n') if l.startswith('### ') or l.startswith('#### ')]
     parsed = [_parse_heading_anchors(l) for l in headings]
     parsed = [p for p in parsed if p['reign_ad'] is not None or p['age_int'] is not None]
 
-    # 出生年共識：由「年號年→公元 − 年齡 + 1」多數決（1613、1662…）
+    # 出生年共識：由「年號年→公元 − 年齡 + 1」多數決（1613、1662…）；現代學者年譜
+    # 亦可用「顯式公元 − 年齡 + 1」
     birth_cands = [p['reign_ad'] - p['age_int'] + 1
                    for p in parsed
                    if p['reign_ad'] is not None and p['age_int'] is not None]
+    birth_cands += [p['ad_anchor_int'] - p['age_int'] + 1
+                    for p in parsed
+                    if p['ad_anchor_int'] is not None and p['age_int'] is not None]
     birth_year = None
     if birth_cands:
         from collections import Counter
@@ -1714,6 +1960,9 @@ def verify_anchors(result):
         # ① 年號年 vs 年齡
         if p['reign_ad'] is not None and ad_age is not None and p['reign_ad'] != ad_age:
             reasons.append(f"年號年→公元 {p['reign_ad']} ≠ 年齡→公元 {ad_age}")
+        # ①' 顯式公元年 vs 年號年
+        if p['reign_ad'] is not None and p['ad_anchor_int'] is not None and p['reign_ad'] != p['ad_anchor_int']:
+            reasons.append(f"顯式公元 {p['ad_anchor_int']} ≠ 年號年→公元 {p['reign_ad']}")
         # ② 干支 vs 年齡（出生年推定後）
         if p['ganzhi_idx'] is not None and ad_age is not None:
             exp = (ad_age - 4) % 60
@@ -1726,6 +1975,12 @@ def verify_anchors(result):
             if p['ganzhi_idx'] != exp:
                 reasons.append(
                     f"干支{p['ganzhi']} ≠ 年號年應為 {_ganzhi_pair_of_ad(p['reign_ad'])}")
+        # ③' 干支 vs 顯式公元年（無年號年可用時）
+        elif p['ganzhi_idx'] is not None and p['ad_anchor_int'] is not None:
+            exp = (p['ad_anchor_int'] - 4) % 60
+            if p['ganzhi_idx'] != exp:
+                reasons.append(
+                    f"干支{p['ganzhi']} ≠ 顯式公元{p['ad_anchor_int']}應為 {_ganzhi_pair_of_ad(p['ad_anchor_int'])}")
         if reasons:
             suspects.append((p['raw'], reasons))
 
@@ -1794,6 +2049,7 @@ REIGN_END_YEARS = {
     '弘光': 1645, '隆武': 1646, '紹武': 1646, '永厤': 1662, '永曆': 1662,
     '順治': 1661, '康熙': 1722, '雍正': 1735, '乾隆': 1795, '嘉慶': 1820,
     '道光': 1850, '咸豐': 1861, '同治': 1874, '光緖': 1908, '光緒': 1908, '光绪': 1908,
+    '顺治': 1661, '乾隆': 1795, '嘉庆': 1820, '咸丰': 1861,
     '宣統': 1911, '宣统': 1911,
     '民國': 1949, '民国': 1949,
 }
@@ -2064,10 +2320,10 @@ def main():
     )
     print(f"讀取：{inp}")
     original = inp.read_text(encoding='utf-8')
-    result = process_nianpu(original)
+    result, modern_report = process_nianpu(original)
 
-    # CBDB 生卒年核驗 + 年號誤配自動修正
-    if cbdb_requested and get_person:
+    # CBDB 生卒年核驗 + 年號誤配自動修正（現代學者年譜已有標題，不適用 --fix 改寫）
+    if cbdb_requested and get_person and modern_report is None:
         name = cbdb_name or (_cbdb_extract_name(original) if _cbdb_extract_name else None)
         if name:
             person = get_person(name)
@@ -2085,6 +2341,30 @@ def main():
 
     out.write_text(result, encoding='utf-8')
     print(f"寫入：{out}")
+
+    if modern_report is not None:
+        # 現代學者年譜：已有標題，輸出統一格式後的標題 + 完整性檢查 + 三錨點檢查
+        hs = [l for l in result.split('\n') if try_parse_modern_heading(l, allow_plain=True) is not None]
+        print(f"\n共找到 {len(hs)} 個年份標題（現代學者年譜，已有標題）：")
+        for h in hs[:60]:
+            try: print(f"  {h}")
+            except UnicodeEncodeError: print(f"  [包含罕用字: {len(h)} chars]")
+        if len(hs) > 60: print(f"  ... 尚有 {len(hs)-60} 個")
+        print()
+        for line in modern_report.split('\n'):
+            try: print(line)
+            except UnicodeEncodeError: print(f"  [包含罕用字]")
+        print()
+        for line in _format_anchor_report(result).split('\n'):
+            try: print(line)
+            except UnicodeEncodeError: print(f"  [包含罕用字]")
+        source_name = inp.name
+        self_learn(original, result, source_file=source_name, report_lines=modern_report.split('\n'))
+        print()
+        try: print(print_learnings_summary())
+        except UnicodeEncodeError: pass
+        return
+
     hs = [l for l in result.split('\n') if l.startswith('### ')]
     print(f"\n共找到 {len(hs)} 個年份標題：")
     for h in hs[:50]:
