@@ -305,7 +305,8 @@ def _split_embedded_years(text):
     as_required = AGE_SUFFIX_REQUIRED  # 後綴必備（無稱謂直接年齡格式）
     ap = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
     ar = '|'.join(REIGNS)
-    person = '(?:' + '|'.join(PERSON_PREFIXES) + r')'
+    extra_person = detect_person_prefixes(text)
+    person = '(?:' + '|'.join(PERSON_PREFIXES + extra_person) + r')'
 
     # 嵌入式模式：行首、或〔註文〕/句末標點後 接「(前綴)(年號)N年干支[標點][年]N歲」
     # 年齡後綴必備，避免把「同治十一年壬申六月」中的「六」誤切為年份標題
@@ -886,6 +887,9 @@ def _build_year_pattern():
 def extract_reign(heading):
     """從標題行中提取年號。"""
     h = heading.strip()
+    # 民國國名「中華」前綴：不影響年號識別，先剝離（中華民國N年→民國N年）
+    if h.startswith('中華'):
+        h = h[2:]
     # 公元年格式（近現代年譜）：公元一八七三年，同治十二年，岁次癸酉，一歲
     # 年號在標題中段（同治/光绪/宣統/民國…），返回該年號，避免被當成無年號而錯誤補上前一年號
     if h.startswith('公元'):
@@ -913,7 +917,8 @@ def _merge_multi_line_years(text):
       ...戊辰八月二十四日\n先生生於...  →  ...戊辰八月二十四日先生生於...
     """
     year_pat = _build_year_pattern()
-    person = '(?:' + '|'.join(PERSON_PREFIXES) + r')'
+    extra_person = detect_person_prefixes(text)
+    person = '(?:' + '|'.join(PERSON_PREFIXES + extra_person) + r')'
     all_reigns = '|'.join(REIGNS)
     lines = text.split('\n')
     merged = []
@@ -923,23 +928,28 @@ def _merge_multi_line_years(text):
 
         # 跨行年份+年齡：純年份行後接年齡/出生
         is_year_line = re.match(
-            r'^(?:' + all_reigns + r')?' + year_pat + r'年$', s
+            r'^(?:中華)?(?:' + all_reigns + r')?' + year_pat + r'年$', s
         )
-        if is_year_line and i + 1 < len(lines):
-            ns = lines[i+1].strip()
-            if (re.match(person + r'(?:年)?\s*' + AGE_DIGITS + r'[' + AGE_SUFFIXES + r']?', ns)
-                or re.match(r'^年' + AGE_DIGITS + r'[' + AGE_SUFFIXES + r']?', ns)
-                or re.match(r'^' + person + r'生(?:於)?', ns)):
-                merged.append(s + ns)
-                i += 2
-                continue
+        if is_year_line:
+            # 跳過空行找下一非空行（民國年譜常以「中華民國N年\n\n希濤N歲」跨行相隔）
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines):
+                ns = lines[j].strip()
+                if (re.match(person + r'(?:年)?\s*' + AGE_DIGITS + r'[' + AGE_SUFFIXES + r']?', ns)
+                    or re.match(r'^年' + AGE_DIGITS + r'[' + AGE_SUFFIXES + r']?', ns)
+                    or re.match(r'^' + person + r'生(?:於)?', ns)):
+                    merged.append(s + ns)
+                    i = j + 1
+                    continue
 
         # 跨行出生/續文：行末"日"後接續文（不限於先生生/公生）
         if s.endswith('日') and i + 1 < len(lines):
             ns = lines[i+1].strip()
             # 只要下一行不是獨立的年分行就合併
             if not re.match(
-                r'^(?:' + all_reigns + r')?' + year_pat + r'年$'
+                r'^(?:中華)?(?:' + all_reigns + r')?' + year_pat + r'年$'
                 + r'|^' + STEM_BRANCH + r'.*' + person + AGE_DIGITS,
                 ns
             ):
@@ -1357,6 +1367,40 @@ def process_modern_nianpu(text):
     return result, report
 
 
+# ======== 傳主名前綴自動偵測 ========
+# 傳統年譜稱謂前綴固定（先生/公/府君）；近代年譜常直接以傳主名為年齡前綴
+# （如袁觀瀾年譜「希濤年五十八歲」「希濤三歲」）。偵測反覆出現的「XX[年]N嵗」
+# 前綴並自動納入該譜稱謂集合，使有稱謂 pattern 得以套用、民國無干支條目得以切分。
+
+def detect_person_prefixes(text):
+    """偵測以傳主名為前綴的「XX年N嵗／XXN嵗」年齡格式，回傳額外前綴清單。
+
+    只統計「緊接 (年號)N年干支 之後」的 2 漢字前綴（非 先生/公/府君），
+    出現 ≥3 次即視為傳主名。例：袁觀瀾年譜「光緒元年乙亥希濤年十歲」
+    反覆出現 → ['希濤']。限定緊接干支之後，可排除正文中「卒年N歲」「夫人年N歲」
+    等非名字前綴（殷譜經等無稱謂格式不會誤觸發）。
+    """
+    y = _build_year_pattern()
+    sb = STEM_BRANCH
+    ar = '|'.join(REIGNS)
+    an = AGE_DIGITS
+    as_suffix = r'[' + AGE_SUFFIXES + r']'
+    age_digit_chars = frozenset('十有和一二三四五六七八九十百零〇廿卅0123456789')
+    pat = re.compile(
+        r'(?:' + ar + r')?' + y + r'年' + sb
+        + r'([一-鿿]{2})(?:年)?(' + an + r')' + as_suffix
+    )
+    counts = {}
+    for m in pat.finditer(text):
+        pre = m.group(1)
+        # 排除已知稱謂與「全由年齡數字構成」的前綴（無稱謂格式「N年干支N歲」的
+        # 前兩位即年齡數字，如 二十/三十，非傳主名）
+        if pre in PERSON_PREFIXES or all(c in age_digit_chars for c in pre):
+            continue
+        counts[pre] = counts.get(pre, 0) + 1
+    return [p for p, c in counts.items() if c >= 3]
+
+
 def classify_format(text):
     """偵測年譜格式族，決定套用哪些年份 pattern 子集，降低誤配率。
 
@@ -1370,11 +1414,12 @@ def classify_format(text):
     sb = STEM_BRANCH
     an = AGE_DIGITS
     as_req = AGE_SUFFIX_REQUIRED
-    person = '(?:' + '|'.join(PERSON_PREFIXES) + r')'
+    extra_person = detect_person_prefixes(text)
+    person = '(?:' + '|'.join(PERSON_PREFIXES + extra_person) + r')'
     reign_alt = '|'.join(REIGNS)
     emp_alt = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
 
-    # 有稱謂：先生/公/府君 [年] N嵗
+    # 有稱謂：先生/公/府君/傳主名 [年] N嵗
     person_age = re.compile(person + r'(?:年)?\s*' + an + as_req)
     n_person = len(person_age.findall(text))
 
@@ -1410,11 +1455,12 @@ def classify_format(text):
                    if try_parse_modern_heading(line, allow_plain=True) is not None)
 
     return {
-        'person': n_person > 0,
+        'person': n_person > 0 or bool(extra_person),
         'no_person': n_no_person > 0,
         'ad': n_ad > 0,
         'bare': n_bare >= 5,
         'modern': n_modern >= 2,
+        '_person_extra': extra_person,
         '_counts': (n_person, n_no_person, n_ad, n_bare, n_modern),
     }
 
@@ -1435,8 +1481,9 @@ def _build_full_pattern(fmt=None):
 
     ap = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
     ar = '|'.join(REIGNS)
-    person = '(?:' + '|'.join(PERSON_PREFIXES) + r')'
-    pp = r'(?:' + ap + r')?(?:' + ar + r')?'
+    extra_person = (fmt or {}).get('_person_extra') or []
+    person = '(?:' + '|'.join(PERSON_PREFIXES + extra_person) + r')'
+    pp = r'(?:中華)?(?:' + ap + r')?(?:' + ar + r')?'
 
     # 出生條目：X年干支...先生生/公生/府君生
     # 中間文字不跨句號，避免誤把「爲公生朝」等生日慶祝當成出生，並防止吞噬其後的真實年份條目
@@ -1455,7 +1502,7 @@ def _build_full_pattern(fmt=None):
 
     # 年份條目（無干支，但有年號前綴，如「順治元年，先生二十六歲」）
     entry_no_sb = (
-        r'(?:' + ap + r')?(?:' + ar + r')'  # 年號前綴是必需的
+        r'(?:中華)?(?:' + ap + r')?(?:' + ar + r')'  # 年號前綴是必需的
         + y + r'年'
         + r'(?!' + sb + r')'        # 後面不是干支
         + r'[^。\n]*?'
@@ -1530,7 +1577,7 @@ def _build_full_pattern(fmt=None):
     # 放在 alternation 末尾：有年齡的條目（entry_sb_no_person 等）先匹配，避免此 pattern 搶走「N年干支」部分
     entry_bare = (
         r'(?:^|(?<=[。！？；〕\n]))\s*'      # 行首或句末/註文後
-        + r'(?:' + ap + r')?(?:' + ar + r')?'  # 可選前綴（皇帝廟號）+年號
+        + r'(?:中華)?(?:' + ap + r')?(?:' + ar + r')?'  # 可選前綴（皇帝廟號）+年號
         + y + r'年' + sb                         # N年干支（干支必備）
         + r'(?!(?:[，,、。]?\s*)?(?:(?:' + person + r')?(?:年)?\s*)?' + an + r'[' + AGE_SUFFIXES + r'])'  # 排除緊接或間隔標點後接「[稱謂][年]N嵗/歲」的（避免搶走「N年干支，公年N歲」等有稱謂年齡條目）
         + r'[，,、。]?'                          # 消耗干支後標點（「二十六年丙子，七月」）
@@ -1567,7 +1614,8 @@ def annotate_ad_years(text):
     y = _build_year_pattern()
     # 標題開頭：(### ) + [廟號前綴?] + [年號?] + N年 + [干支?]
     head_pat = re.compile(
-        r'^(?:' + '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES) + r')?'
+        r'^(?:中華)?'
+        + r'(?:' + '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES) + r')?'
         + r'(?:' + '|'.join(re.escape(r) for r in REIGNS) + r')?'
     )
     yr_pat = re.compile(r'(' + y + r'年)(?:' + STEM_BRANCH + r')?')
@@ -1590,19 +1638,21 @@ def annotate_ad_years(text):
             hm = head_pat.match(head)
             reign = None
             rest = head
+            cn_off = 2 if head.startswith('中華') else 0
             if hm:
+                base = head[cn_off:]
                 rest = head[hm.end():]
                 # 從標題開頭往後找年號（優先完整匹配，含廟號前綴）
                 for r in REIGNS:
-                    if head.startswith(r):
+                    if base.startswith(r):
                         reign = r
-                        rest = head[len(r):]
+                        rest = base[len(r):]
                         break
                 else:
                     for p, r in EMPEROR_PREFIXES:
-                        if p and head.startswith(p) and head[len(p):].startswith(r):
+                        if p and base.startswith(p) and base[len(p):].startswith(r):
                             reign = r
-                            rest = head[len(p) + len(r):]
+                            rest = base[len(p) + len(r):]
                             break
             ym = yr_pat.match(rest)
             if reign and ym:
@@ -1627,6 +1677,8 @@ def process_nianpu(text):
     fmt = classify_format(text)
     if fmt.get('modern'):
         return process_modern_nianpu(text)
+    # 剝離 HTML 註解（如分頁標記 <!-- 第X頁 -->），避免干擾年份識別
+    text = re.sub(r'<!--.*?-->', '', text)
     # 年號字形正規化
     text = _normalize_reign_variants(text)
     # OCR 錯誤修正
@@ -1641,16 +1693,18 @@ def process_nianpu(text):
 
         # 出生條目：在第一個句號處截斷（僅保留干支+年號+年）
         # 「先生於」中的「生於」不是出生標記（(?<!先)排除）
-        is_birth = bool(re.search(r'(?<!先)生於', raw)) or '公生' in raw
+        person_p = '(?:' + '|'.join(PERSON_PREFIXES + fmt.get('_person_extra', [])) + r')'
+        is_birth = (bool(re.search(r'(?<!先)生於', raw))
+                    or re.search(person_p + r'生(?:於)?', raw) is not None)
         if is_birth and '。' in raw:
             raw = raw.split('。')[0]
 
         # 清理標題（移除〔〕註文）
         heading = _make_heading(raw)
 
-        # 出生條目：移除結尾的「先生生(於)」「公生(於)」等，保持標題乾淨
+        # 出生條目：移除結尾的「先生生(於)」「公生(於)」「希濤生」等，保持標題乾淨
         if is_birth:
-            heading = re.sub(r'(?:先生|公)生(?:於)?$', '', heading)
+            heading = re.sub(person_p + r'生(?:於)?$', '', heading)
             heading = heading.rstrip('，, ')
 
         # 如果清理後標題過長（>40字，出生條目 >30字），跳過
@@ -1697,7 +1751,8 @@ def verify_output(original_text, result):
 
     ap = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
     ar = '|'.join(REIGNS)
-    person = '(?:' + '|'.join(PERSON_PREFIXES) + r')'
+    extra_person = detect_person_prefixes(original_text)
+    person = '(?:' + '|'.join(PERSON_PREFIXES + extra_person) + r')'
 
     def head_starts_with_reign(h):
         for r_ in REIGNS:
@@ -1917,7 +1972,8 @@ def _parse_heading_anchors(heading):
         info['age'] = age_s
         info['age_int'] = _chinese_year_to_int(age_s)
     # ④ 顯式公元年（現代學者年譜：干支後接 1813年／一九二三年；排除（1806年）括號註記）
-    adm = re.search(r'(?<![（(])(?:公元)?(?P<aad>[0-9]{3,4}|[一二三四五六七八九零〇]{3,4})\s*年', h)
+    # (?<!\d) 避免部分匹配長數字（（1867年）中的「867」），(?<![（(]) 排除括號內的公元註記
+    adm = re.search(r'(?<!\d)(?<![（(])(?:公元)?(?P<aad>[0-9]{3,4}|[一二三四五六七八九零〇]{3,4})\s*年', h)
     if adm:
         a = adm.group('aad')
         info['ad_anchor'] = a
