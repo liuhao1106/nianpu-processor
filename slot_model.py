@@ -133,6 +133,13 @@ FEWSHOT = [
                "has_birth_entry": True, "birth_form": "日期無生字", "monthly_split": False,
                "modern_heading": True, "cross_line": False, "default_reign": "",
                "ocr_variants": {}}},
+    {"name": "重刻鄭端簡公年譜", "format": "行首裸干支（公N歲稀疏）",
+     "slots": {"reigns": ["弘治", "正德", "嘉靖", "隆慶"], "year_style": "ganzhi_only",
+               "uses_ganzhi": True, "person_prefix": "公", "age_connector": "無",
+               "age_suffix": "歲", "age_position": "緊跟干支", "no_person": False,
+               "bare_years": True, "has_birth_entry": True, "birth_form": "公生",
+               "monthly_split": True, "modern_heading": False, "cross_line": False,
+               "default_reign": "", "ocr_variants": {"内午": "丙午", "内申": "丙申", "壬戍": "壬戌"}}},
 ]
 
 PROMPT_TEMPLATE = """你是年譜格式分析器。把「每年譜改一次正則」變成「填一張語義槽位表」。
@@ -213,6 +220,8 @@ def slots_to_fmt(slots: dict) -> dict:
         "no_person": bool((slots or {}).get("no_person")),
         "ad": bool((slots or {}).get("year_style") == "ad"),
         "bare": bool((slots or {}).get("bare_years")),
+        # 行首裸干支年標（重刻鄭端簡公年譜等）：全譜以「庚申、」「己亥春入京」行首裸干支紀年
+        "bare_gz": bool((slots or {}).get("year_style") == "ganzhi_only"),
         "modern": bool((slots or {}).get("modern_heading")),
         "_person_extra": extra,
     }

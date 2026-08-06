@@ -237,6 +237,55 @@ def _ganzhi_pair_of_ad(ad_year):
     return _STEMS_CANON[i % 10] + _BRANCHES_CANON[i % 12]
 
 
+def _int_to_chinese_year(n):
+    """整數年序（1~80）→ 中文寫法：1→元、13→十三、21→二十一。"""
+    if n <= 0:
+        return None
+    if n == 1:
+        return '元'
+    digits = '一二三四五六七八九'
+    if n < 20:
+        return '十' + (digits[n - 10] if n > 10 else '')
+    tens, ones = divmod(n, 10)
+    s = (digits[tens - 1] if tens > 1 else '') + '十'
+    if ones:
+        s += digits[ones - 1]
+    return s
+
+
+def _expand_bare_gz_heading(heading, reign):
+    """純干支標題（丁卯，公九歲／己亥）→ 依「當前年號 + 干支週期」推得年序與公元年。
+
+    公式：offset =（目標干支索引 − 年號元年干支索引）mod 60；AD = 年號元年 + offset；
+          年序 = offset + 1。年號歷時皆 <60 年，故 mod-60 落在年號內唯一。
+    合理性：推算出的 AD 年干支須與目標一致（防 60 年週期在長年號下的歧義）；
+           年序 ≤80 才算數，否則回傳 None（維持原標題）。
+    回傳「年號N年干支」+原標題殘餘（如「，公九歲」）；失敗回傳 None。
+    """
+    m = re.match(r'^(?P<gz>[' + _TG + r'][' + _DZ + r'])(?P<rest>.*)$', heading)
+    if not m:
+        return None
+    gz, rest = m.group('gz'), m.group('rest')
+    rstart = REIGN_START_YEARS.get(reign)
+    gi = _ganzhi_index_of_pair(gz)
+    if rstart is None or gi is None:
+        return None
+    sgi = _ganzhi_index_of_pair(_ganzhi_pair_of_ad(rstart))
+    if sgi is None:
+        return None
+    offset = (gi - sgi) % 60
+    ad = rstart + offset
+    if _ganzhi_index_of_pair(_ganzhi_pair_of_ad(ad)) != gi:
+        return None
+    n = offset + 1
+    if n > 80:
+        return None
+    year_str = _int_to_chinese_year(n)
+    if year_str is None:
+        return None
+    return f'{reign}{year_str}年{gz}{rest}'
+
+
 # ======== OCR 容錯修正 ========
 
 _OCR_FIXES = [
@@ -250,6 +299,12 @@ _OCR_FIXES = [
     (r'卅(\s*年)', r'三十\1'),
     # 十不年 → 十八年（OCR 誤刻：不/八形近，唐一庵先生年譜「嘉靖十不年己亥四十三歲」）
     (r'十不年', '十八年'),
+    # 干支 OCR 變體（重刻鄭端簡公年譜等明代年譜）：
+    #   丙→内（「内申三月辛巳」=丙申三月、「已。内午三月」=丙午三月）
+    (r'内申', '丙申'),
+    (r'内午', '丙午'),
+    #   戍→戌（「壬戍春二月」=壬戌春二月；壬戍僅作干支，非「戍守」之戍）
+    (r'壬戍', '壬戌'),
 ]
 
 def _apply_ocr_fixes(text):
@@ -991,10 +1046,12 @@ def _merge_multi_line_years(text, person_extra=None):
 def _make_heading(raw):
     """清理標題：移除方括註文〔〕，去除多餘空白標點。"""
     cleaned = re.sub(r'〔[^〕]*〕', '', raw)
-    cleaned = cleaned.strip().rstrip('。，, ')
+    cleaned = cleaned.strip().rstrip('。，、, ')
     cleaned = re.sub(r'\s+', '', cleaned)
     # 句號用作干支與稱謂分隔符時（如「丙申。公四十一嵗」）改為逗號
     cleaned = cleaned.replace('。', '，')
+    # 「十有二年/十有七嵗」→「十二年/十七嵗」（文言計數正規化，僅影響標題）
+    cleaned = cleaned.replace('十有', '十')
     return cleaned
 
 
@@ -1455,6 +1512,14 @@ def classify_format(text):
     )
     n_bare = len(bare_pat.findall(text))
 
+    # 行首裸干支年標（重刻鄭端簡公年譜等）：全譜以行首裸干支紀年，如「庚申、」「己亥春入京」
+    # 「丁卯。公九歲」「戊申在尚寶」。限行首且後不接干支（防「已未庚申」連續誤切）。
+    # 連續 ≥5 個才視為該格式族——避免散文干支日期（如「辛亥鼎革」「辛酉五月望前一日」）誤觸發
+    bare_gz_pat = re.compile(
+        r'^[○〇]?[' + _TG + r'][' + _DZ + r'](?![甲乙丙丁戊己已庚辛壬癸巳])'
+    )
+    n_bare_gz = sum(1 for line in text.split('\n') if bare_gz_pat.match(line.strip()))
+
     # 現代學者年譜：已有年份標題（年號N年 干支 公元年 年齡），非待切分。
     # 判定：≥2 行能被 try_parse_modern_heading(allow_plain=True) 解析——
     # 含帶 # 前綴標題與無 # 前綴的純文字獨立年份行（四錨點覆蓋整行）。
@@ -1468,9 +1533,10 @@ def classify_format(text):
         'no_person': n_no_person > 0,
         'ad': n_ad > 0,
         'bare': n_bare >= 5,
+        'bare_gz': n_bare_gz >= 5,
         'modern': n_modern >= 2,
         '_person_extra': extra_person,
-        '_counts': (n_person, n_no_person, n_ad, n_bare, n_modern),
+        '_counts': (n_person, n_no_person, n_ad, n_bare, n_bare_gz, n_modern),
     }
 
 
@@ -1584,12 +1650,48 @@ def _build_full_pattern(fmt=None):
     # 匹配：紹興元年辛亥 ／ 四年甲寅 ／ 孝宗隆興元年癸未 ／ 光宗紹熙元年庚戍
     # 限行首或句末/註文後，且干支必備（區分正文年份引用「淳熙元年，始拜命」）
     # 放在 alternation 末尾：有年齡的條目（entry_sb_no_person 等）先匹配，避免此 pattern 搶走「N年干支」部分
+    age_lookahead = (r'(?!(?:[，,、。]?\s*)?(?:(?:' + person + r')?(?:年)?\s*)?'
+                     + an + r'[' + AGE_SUFFIXES + r'])')
     entry_bare = (
         r'(?:^|(?<=[。！？；〕\n]))\s*'      # 行首或句末/註文後
         + r'(?:中華)?(?:' + ap + r')?(?:' + ar + r')?'  # 可選前綴（皇帝廟號）+年號
         + y + r'年' + sb                         # N年干支（干支必備）
-        + r'(?!(?:[，,、。]?\s*)?(?:(?:' + person + r')?(?:年)?\s*)?' + an + r'[' + AGE_SUFFIXES + r'])'  # 排除緊接或間隔標點後接「[稱謂][年]N嵗/歲」的（避免搶走「N年干支，公年N歲」等有稱謂年齡條目）
+        + age_lookahead
         + r'[，,、。]?'                          # 消耗干支後標點（「二十六年丙子，七月」）
+    )
+
+    # 行首裸干支年標（重刻鄭端簡公年譜等）：庚申、／己亥春入京／丁卯。公九歲／戊申在尚寶
+    # 限行首（句末/文中的散文干支日期如「甲寅、乙卯以來」「戊午陜巴之復」不切），
+    # 干支後不接干支（防「已未庚申」連續誤切）。標題為「干支」；年號+年序+公元
+    # 由 insert() 依「當前年號 + 干支週期」推算（_expand_bare_gz_heading）。
+    # 由格式分類 bare_gz（或 --slots year_style=ganzhi_only）開關，避免散文干支誤觸發。
+    entry_bare_gz = (
+        r'(?:^|(?<=\n))\s*'                    # 行首
+        + r'[○〇]?'                             # 可選段落標記
+        + r'(?<!年)'                             # 干支前不能有「年」
+        + r'(?P<gz>[' + _TG + r'][' + _DZ + r'])'  # 干支
+        + r'(?![甲乙丙丁戊己已庚辛壬癸巳])'       # 後不接干支
+        + r'[，,、。]?'
+    )
+
+    # bare_gz 模式的行首完整年標變體：僅「行首」的 (前綴)?(年號)?N年干支
+    # （如卷首「嘉靖三十八年己未」「隆慶元年丁卯」）。句末的 N年干支（散文引用，
+    # 如「永樂十九年辛丑」「二十六年甲申」）不切——bare_gz 格式的年標以行首為準。
+    entry_bare_ls = (
+        r'(?:^|(?<=\n))\s*'
+        + r'(?:中華)?(?:' + ap + r')?(?:' + ar + r')?'
+        + y + r'年' + sb
+        + age_lookahead
+        + r'[，,、。]?'
+    )
+    # bare_gz 模式的句末「元年」變體：僅 句末/註文後 的「元年干支」（年號更替，
+    # 如「…魁浙。嘉靖元年壬午，舉…」）。非元年的句末 N年干支 皆為散文引用，不切。
+    entry_bare_se_yuan = (
+        r'(?<=[。！？；〕])\s*'
+        + r'(?:中華)?(?:' + ap + r')?(?:' + ar + r')?'
+        + r'元年' + sb
+        + age_lookahead
+        + r'[，,、。]?'
     )
 
     # 依格式族選擇 pattern 子集（fmt=None 時全部套用）
@@ -1606,11 +1708,21 @@ def _build_full_pattern(fmt=None):
         alts.extend([entry_sb, entry_no_sb, entry_sb_direct])
     if fmt is None or fmt.get('no_person'):
         alts.append(entry_sb_no_person)
-    if fmt is None or fmt.get('bare'):
-        alts.append(entry_bare)   # 放末尾：有年齡條目優先
+    if fmt is None:
+        alts.append(entry_bare)
+        alts.append(entry_bare_gz)   # 保險：全部 pattern 時也含行首裸干支
+    else:
+        # 純朱熹式（bare，非 bare_gz）：用通用 entry_bare（行首或句末）
+        if fmt.get('bare') and not fmt.get('bare_gz'):
+            alts.append(entry_bare)   # 放末尾：有年齡條目優先
+        # 行首裸干支年標格式（bare_gz）：N年干支僅行首／句末元年；行首裸干支
+        if fmt.get('bare_gz'):
+            alts.append(entry_bare_ls)      # 行首完整年標（卷首）
+            alts.append(entry_bare_se_yuan) # 句末元年（年號更替）
+            alts.append(entry_bare_gz)      # 行首裸干支
     if not alts:   # 保險：分類異常導致空集合時退回全部，避免漏切
         alts = [ad_entry, birth, entry_sb, entry_no_sb, birth_direct,
-                entry_sb_direct, birth_no_person, entry_sb_no_person, entry_bare]
+                entry_sb_direct, birth_no_person, entry_sb_no_person, entry_bare, entry_bare_gz]
     return re.compile('(?:' + '|'.join(alts) + ')')
 
 
@@ -1698,6 +1810,11 @@ def process_nianpu(text, slots=None):
     text = _normalize_reign_variants(text)
     # OCR 錯誤修正
     text = _apply_ocr_fixes(text)
+    # --slots 的 ocr_variants：套用槽位指定的額外字形修正（如 内午→丙午、壬戍→壬戌）
+    if slots and slots.get('ocr_variants'):
+        for _old, _new in slots['ocr_variants'].items():
+            if _old and _old != _new:
+                text = text.replace(_old, _new)
     text = _merge_multi_line_years(text, person_extra=person_extra)
     reign_state = [None]
 
@@ -1735,7 +1852,16 @@ def process_nianpu(text, slots=None):
             heading.startswith(rr) for rr in REIGNS
         ) and not heading.startswith('公元')):
             # 公元年格式標題（如 公元一九五零年）本身即為完整年份，不補上年號
-            heading = reign_state[0] + heading
+            # 行首裸干支年標（bare_gz 格式）：由干支週期 + 當前年號 推得年序＋公元年
+            # （丁卯，公九歲 → 正德二年丁卯，公九歲；己亥 → 嘉靖十八年己亥）
+            if fmt.get('bare_gz'):
+                expanded = _expand_bare_gz_heading(heading, reign_state[0])
+                if expanded is not None:
+                    heading = expanded
+                else:
+                    heading = reign_state[0] + heading
+            else:
+                heading = reign_state[0] + heading
 
         return '\n### ' + heading + '\n'
 
@@ -1764,6 +1890,11 @@ def verify_output(original_text, result, person_extra=None):
     sb = STEM_BRANCH
     an = AGE_DIGITS
     as_ = r'[' + AGE_SUFFIXES + r']?'
+    # bare_gz 格式（行首裸干支年標）：句末的 N年干支 若非「元年」，視為散文引用而非年份條目
+    try:
+        bare_gz = classify_format(original_text).get('bare_gz')
+    except Exception:
+        bare_gz = False
 
     ap = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
     ar = '|'.join(REIGNS)
@@ -1794,7 +1925,7 @@ def verify_output(original_text, result, person_extra=None):
         age = age_m.group(1) if age_m else '?'
         # 提取年份部分
         marker = m.group(1)
-        raw_matches[marker] = {'age': age, 'heading': heading_raw}
+        raw_matches[marker] = {'age': age, 'heading': heading_raw, 'pos': m.start()}
 
     # 排除「無干支 且 無年齡錨點」的正文年份引用（如卷末附錄/追述「三十八年，學使…」「同治二年，清釐戸管」）。
     # 真實年份條目必有其一：干支（含出生條目，如 明萬曆三十八年庚戌…）或 年齡+後綴（如 先生N嵗/公二嵗）。
@@ -1804,6 +1935,17 @@ def verify_output(original_text, result, person_extra=None):
         if info['age'] == '?' and not re.search(sb, marker):
             prose_year_refs.append(marker)
             del raw_matches[marker]
+            continue
+        # bare_gz 格式：句末（非行首）的 N年干支 若非「元年」，視為散文引用
+        # （重刻鄭端簡公年譜：卷末追述「二十六年甲申」「永樂十九年辛丑」皆正文追憶）
+        if bare_gz:
+            pos = info['pos']
+            prev = original_text[pos - 1] if pos > 0 else ''
+            is_linestart = (pos == 0 or prev == '\n')
+            is_yuan = bool(re.search(r'元年' + sb, marker))
+            if not is_linestart and not is_yuan:
+                prose_year_refs.append(marker)
+                del raw_matches[marker]
 
     # === 2. 從輸出中提取已處理的標題 ===
     output_headings = set()
@@ -1826,9 +1968,11 @@ def verify_output(original_text, result, person_extra=None):
     for marker, info in raw_matches.items():
         # 嘗試匹配輸出的 ### 標題
         found = False
+        # 標題已把「十有二年」正規化為「十二年」，比對時同步正規化
+        marker_n = marker.replace('十有', '十')
         for oh in output_headings:
             # 如果輸出的標題包含原始年份標記（去掉前綴），則認為已處理
-            if marker in oh or oh in marker:
+            if marker_n in oh or oh in marker_n:
                 found = True
                 captured.append(marker)
                 break
