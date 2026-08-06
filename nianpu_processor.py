@@ -25,6 +25,13 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).parent.resolve()
 LEARNINGS_FILE = SKILL_DIR / 'learnings.json'
 
+# 語義槽位模型（--slots 配置）：slot_model.slots_to_fmt 把 LLM 推得的槽位
+# 映射為本工具的格式族 dict，使新格式不需改正則、只需填槽位表
+try:
+    from slot_model import slots_to_fmt
+except ImportError:
+    slots_to_fmt = None
+
 
 # ======== 配置區 ========
 # 年號：包含宋代、元代、明代（含南明）、清代
@@ -291,13 +298,14 @@ def _normalize_reign_variants(text):
 
 # ======== 嵌入式年份拆分 ========
 
-def _split_embedded_years(text):
+def _split_embedded_years(text, person_extra=None):
     """在已合併的段落中二次掃描嵌入式年份模式。
 
     處理如「八年戊子五歲。九年己丑六歲」等連續密集的年份條目，
     以及行首獨立出現的「十七年壬申二十二歲」等條目。
     在 `_merge_broken_lines` 之後調用，將隱藏的年份拆出為獨立標題，
     並自動補全年號（沿用前一個標題的年號）。
+    person_extra：--slots 槽位指定之傳主名前綴；None 時自動偵測。
     """
     y = _build_year_pattern()
     sb = STEM_BRANCH
@@ -305,7 +313,7 @@ def _split_embedded_years(text):
     as_required = AGE_SUFFIX_REQUIRED  # 後綴必備（無稱謂直接年齡格式）
     ap = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
     ar = '|'.join(REIGNS)
-    extra_person = detect_person_prefixes(text)
+    extra_person = detect_person_prefixes(text) if person_extra is None else list(person_extra)
     person = '(?:' + '|'.join(PERSON_PREFIXES + extra_person) + r')'
 
     # 嵌入式模式：行首、或〔註文〕/句末標點後 接「(前綴)(年號)N年干支[標點][年]N歲」
@@ -910,14 +918,15 @@ def extract_reign(heading):
     return None, h
 
 
-def _merge_multi_line_years(text):
+def _merge_multi_line_years(text, person_extra=None):
     """
     合併跨行年份+年齡（沈端恪）和跨行出生（萬清軒出生條目）：
       康熙十六年\n公七歲  →  康熙十六年公七歲
       ...戊辰八月二十四日\n先生生於...  →  ...戊辰八月二十四日先生生於...
+    person_extra：--slots 槽位指定之傳主名前綴；None 時自動偵測。
     """
     year_pat = _build_year_pattern()
-    extra_person = detect_person_prefixes(text)
+    extra_person = detect_person_prefixes(text) if person_extra is None else list(person_extra)
     person = '(?:' + '|'.join(PERSON_PREFIXES + extra_person) + r')'
     all_reigns = '|'.join(REIGNS)
     lines = text.split('\n')
@@ -1664,7 +1673,7 @@ def annotate_ad_years(text):
     return '\n'.join(lines)
 
 
-def process_nianpu(text):
+def process_nianpu(text, slots=None):
     """按年份切分年譜文本。
 
     使用正則表達式全文查找年份+年齡組合，替換為 ### 標題行。
@@ -1673,17 +1682,23 @@ def process_nianpu(text):
     現代學者年譜（已有年份標題）另走 process_modern_nianpu：不做傳統匹配，
     只統一格式並檢查標題是否全。回傳 (result, modern_report)，非現代格式時
     modern_report 為 None。
+
+    slots：--slots 槽位配置（slot_model.slots_to_fmt 產生的格式族 dict），
+    由 LLM 依新年譜開頭推得，使新格式不需改正則。
     """
     fmt = classify_format(text)
+    if slots:
+        fmt = slots_to_fmt(slots)
     if fmt.get('modern'):
         return process_modern_nianpu(text)
+    person_extra = fmt.get('_person_extra', [])
     # 剝離 HTML 註解（如分頁標記 <!-- 第X頁 -->），避免干擾年份識別
     text = re.sub(r'<!--.*?-->', '', text)
     # 年號字形正規化
     text = _normalize_reign_variants(text)
     # OCR 錯誤修正
     text = _apply_ocr_fixes(text)
-    text = _merge_multi_line_years(text)
+    text = _merge_multi_line_years(text, person_extra=person_extra)
     reign_state = [None]
 
     def insert(m):
@@ -1728,7 +1743,7 @@ def process_nianpu(text):
     pat = _build_full_pattern(fmt)
     result = pat.sub(insert, text)
     result = _merge_broken_lines(result)
-    result = _split_embedded_years(result)
+    result = _split_embedded_years(result, person_extra=person_extra)
     result = split_by_month(result)
     # 在標題上標註公元年：嘉慶十一年丙寅 → 嘉慶十一年丙寅（1806年）
     result = annotate_ad_years(result)
@@ -1736,11 +1751,12 @@ def process_nianpu(text):
     return result.strip() + '\n', None
 
 
-def verify_output(original_text, result):
+def verify_output(original_text, result, person_extra=None):
     """檢查年譜整理結果，報告遺漏和異常。
 
     比對原始文本中所有「N年干支 + 先生N歲」組合與輸出 ### 標題，
     列出遺漏的年份條目及異常情況。
+    person_extra：--slots 槽位指定之傳主名前綴；None 時自動偵測。
     """
     # 年號字形先正規化（光緖→光緒），避免比對時因字形變體誤報遺漏
     original_text = _normalize_reign_variants(original_text)
@@ -1751,7 +1767,7 @@ def verify_output(original_text, result):
 
     ap = '|'.join(re.escape(p) for p, _ in EMPEROR_PREFIXES)
     ar = '|'.join(REIGNS)
-    extra_person = detect_person_prefixes(original_text)
+    extra_person = detect_person_prefixes(original_text) if person_extra is None else list(person_extra)
     person = '(?:' + '|'.join(PERSON_PREFIXES + extra_person) + r')'
 
     def head_starts_with_reign(h):
@@ -2311,6 +2327,17 @@ def main():
         else:
             del argv[i]  # 空 --cbdb：自動從卷首提取傳主名
 
+    # --slots <json>：LLM 依新年譜開頭推得的語義槽位配置，覆蓋格式分類
+    slots = None
+    if '--slots' in argv:
+        i = argv.index('--slots')
+        sp = argv[i + 1] if i + 1 < len(argv) else None
+        if sp:
+            slots = json.loads(Path(sp).read_text(encoding='utf-8'))
+            del argv[i:i + 2]
+        else:
+            del argv[i]
+
     if not argv:
         print(__doc__); sys.exit(1)
 
@@ -2376,7 +2403,10 @@ def main():
     )
     print(f"讀取：{inp}")
     original = inp.read_text(encoding='utf-8')
-    result, modern_report = process_nianpu(original)
+    slot_extra = None
+    if slots and slots_to_fmt:
+        slot_extra = slots_to_fmt(slots).get('_person_extra') or None
+    result, modern_report = process_nianpu(original, slots=slots)
 
     # CBDB 生卒年核驗 + 年號誤配自動修正（現代學者年譜已有標題，不適用 --fix 改寫）
     if cbdb_requested and get_person and modern_report is None:
@@ -2428,7 +2458,7 @@ def main():
         except UnicodeEncodeError: print(f"  [包含罕用字: {len(h)} chars]")
     if len(hs) > 50: print(f"  ... 尚有 {len(hs)-50} 個")
     print()
-    report_lines = verify_output(original, result).split('\n')
+    report_lines = verify_output(original, result, person_extra=slot_extra).split('\n')
     for line in report_lines:
         try: print(line)
         except UnicodeEncodeError: print(f"  [包含罕用字]")

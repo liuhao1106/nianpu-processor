@@ -46,6 +46,7 @@ description: 年譜處理器（nianpu-processor）工具。將中國年譜（chr
 /nianpu-processor <輸入檔案路徑> [輸出檔案路徑] --cbdb <傳主名>        # CBDB 核驗生卒年 + 年號誤配建議
 /nianpu-processor <輸入檔案路徑> [輸出檔案路徑] --cbdb <傳主名> --fix  # 一鍵套用年號修正
 /nianpu-processor --check <已整理.md> --cbdb <傳主名>                 # 只複查，附 CBDB 核驗（不改檔）
+/nianpu-processor <輸入檔案路徑> [輸出檔案路徑] --slots <槽位.json>     # 語義槽位配置（v1 原型）：LLM 依新年譜開頭推得槽位 JSON，覆蓋格式分類/傳主名前綴，新格式不需改正則（slot_model.py）
 ```
 
 若不指定輸出檔，預設為輸入檔名加上 `_已整理`。`--cbdb` 不帶名時自動從卷首「公諱/先生諱」提取傳主。
