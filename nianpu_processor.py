@@ -974,6 +974,14 @@ def extract_reign(heading):
     return None, h
 
 
+def _next_nonempty(lines, start):
+    """回傳 (index, 內容) of 下一非空行；無則 None。"""
+    for j in range(start, len(lines)):
+        if lines[j].strip():
+            return j, lines[j].strip()
+    return None
+
+
 def _merge_multi_line_years(text, person_extra=None):
     """
     合併跨行年份+年齡（沈端恪）和跨行出生（萬清軒出生條目）：
@@ -1008,6 +1016,19 @@ def _merge_multi_line_years(text, person_extra=None):
                     merged.append(s + ns)
                     i = j + 1
                     continue
+
+        # 跨行拆分年份（影印本 OCR 把豎排標題拆成 年號/N年/干支 三行）：
+        #   康熙\n五年\n丙午  →  康熙五年丙午；乾隆\n元年\n丙辰 → 乾隆元年丙辰
+        if i + 1 < len(lines):
+            nxt = _next_nonempty(lines, i + 1)
+            nxt2 = _next_nonempty(lines, nxt[0] + 1) if nxt else None
+            if (nxt and nxt2
+                    and re.match(r'^(?:大淸|大清|明|中華)?(?:' + all_reigns + r')$', s)
+                    and re.match(r'^' + year_pat + r'年$', nxt[1])
+                    and re.match(r'^' + STEM_BRANCH + r'$', nxt2[1])):
+                merged.append(s + nxt[1] + nxt2[1])
+                i = nxt2[0] + 1
+                continue
 
         # 跨行出生/續文：行末"日"後接續文（不限於先生生/公生）
         if s.endswith('日') and i + 1 < len(lines):
