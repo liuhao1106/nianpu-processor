@@ -4,11 +4,20 @@
 
 本工具旨在為中國歷史人物、思想史、哲學史、學術史研究搭建數字基礎文本——將結構混亂的年譜原始文本轉化為結構清晰、可由 AI Agent 自動識讀的 Markdown 格式，便於後續搭建 RAG 知識庫、進行大規模文本分析與哲學史、思想史、史學研究。
 
-| **快速上手** | **格式與原理** | **成果與記錄** |
-| :---: | :---: | :---: |
-| [功能](#功能) | [支援的年份格式](#支援的年份格式) | [已成功處理的年譜](#已成功處理的年譜) |
-| [安裝](#安裝) | [處理流程](#處理流程) | [常見問題](#常見問題) |
-| [快速開始](#快速開始) | [演算法](#演算法) | [更新日誌](#更新日誌) |
+<div align="center">
+
+<a href="#快速開始" style="display:inline-block;margin:4px 3px;padding:7px 20px;border-radius:20px;background:#1f6feb;color:#ffffff;font-weight:600;text-decoration:none;font-size:14px;">快速開始</a>
+<a href="#功能" style="display:inline-block;margin:4px 3px;padding:7px 18px;border-radius:20px;background:#f0f4fa;border:1px solid #d0d7de;color:#1f6feb;font-weight:600;text-decoration:none;font-size:14px;">功能</a>
+<a href="#安裝" style="display:inline-block;margin:4px 3px;padding:7px 18px;border-radius:20px;background:#f0f4fa;border:1px solid #d0d7de;color:#1f6feb;font-weight:600;text-decoration:none;font-size:14px;">安裝</a>
+<a href="#支援的年份格式" style="display:inline-block;margin:4px 3px;padding:7px 18px;border-radius:20px;background:#f0f4fa;border:1px solid #d0d7de;color:#1f6feb;font-weight:600;text-decoration:none;font-size:14px;">年份格式</a>
+<a href="#處理流程" style="display:inline-block;margin:4px 3px;padding:7px 18px;border-radius:20px;background:#f0f4fa;border:1px solid #d0d7de;color:#1f6feb;font-weight:600;text-decoration:none;font-size:14px;">處理流程</a>
+<a href="#演算法" style="display:inline-block;margin:4px 3px;padding:7px 18px;border-radius:20px;background:#f0f4fa;border:1px solid #d0d7de;color:#1f6feb;font-weight:600;text-decoration:none;font-size:14px;">演算法</a>
+<a href="#檢查報告" style="display:inline-block;margin:4px 3px;padding:7px 18px;border-radius:20px;background:#f0f4fa;border:1px solid #d0d7de;color:#1f6feb;font-weight:600;text-decoration:none;font-size:14px;">檢查報告</a>
+<a href="#常見問題" style="display:inline-block;margin:4px 3px;padding:7px 18px;border-radius:20px;background:#f0f4fa;border:1px solid #d0d7de;color:#1f6feb;font-weight:600;text-decoration:none;font-size:14px;">常見問題</a>
+<a href="#已成功處理的年譜" style="display:inline-block;margin:4px 3px;padding:7px 18px;border-radius:20px;background:#f0f4fa;border:1px solid #d0d7de;color:#1f6feb;font-weight:600;text-decoration:none;font-size:14px;">已處理年譜</a>
+<a href="#更新日誌" style="display:inline-block;margin:4px 3px;padding:7px 18px;border-radius:20px;background:#f0f4fa;border:1px solid #d0d7de;color:#1f6feb;font-weight:600;text-decoration:none;font-size:14px;">更新日誌</a>
+
+</div>
 
 ## 測試報告
 
