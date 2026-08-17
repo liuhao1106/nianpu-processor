@@ -72,6 +72,14 @@ EMPEROR_PREFIXES = [
     ('穆宗毅皇帝','同治'),('穆宗毅','同治'),
     ('德宗景皇帝','光緖'),('德宗景','光緖'),
     ('今上','光緖'),
+    # 明代皇帝前綴（陳紫峰等明代年譜：憲宗成化、孝宗弘治、武宗正德、世宗嘉靖、穆宗隆慶、神宗萬曆）
+    # 孝宗/光宗與宋代前綴同名（宋孝宗隆興/光宗紹熙）：extract_reign 以「後接年號是否
+    # 在 REIGNS」分辨，故同名共存安全
+    ('憲宗','成化'),('孝宗','弘治'),('武宗','正德'),('世宗','嘉靖'),
+    ('穆宗','隆慶'),('神宗','萬曆'),('光宗','泰昌'),('熹宗','天啟'),('思宗','崇禎'),
+    # 廟號+皇帝 變體（陳紫峰年譜：穆宗皇帝隆慶、世宗皇帝嘉靖）
+    ('憲宗皇帝','成化'),('孝宗皇帝','弘治'),('武宗皇帝','正德'),('世宗皇帝','嘉靖'),
+    ('穆宗皇帝','隆慶'),('神宗皇帝','萬曆'),('光宗皇帝','泰昌'),('熹宗皇帝','天啟'),('思宗皇帝','崇禎'),
     ('大淸',''),('大清',''),   # 大清是年號前綴，實際年號跟在其後
     ('明',''),                  # 明是年號前綴，實際年號跟在其後
     # 宋代皇帝前綴（朱熹年譜：宋高宗建炎、孝宗隆興、光宗紹熙、寧宗慶元）
@@ -466,6 +474,13 @@ _OCR_FIXES = [
     (r'次子習中癸未四十五嵗', '次子習中。癸未四十五嵗'),
     #   「…鈔存乙未五十七歲…」→「…鈔存。乙未五十七歲…」
     (r'鈔存乙未五十七歲', '鈔存。乙未五十七歲'),
+    # 兀→元（萬曆兀年→萬曆元年，陳紫峰年譜 神宗萬曆兀年癸酉；兀/元形近）
+    (r'兀年', '元年'),
+    # 一十八年→二十八年（陳紫峰年譜「一十八年庚子四月議謚」：干支庚子=1600=萬曆二十八年，
+    # 一/二 形近；同焦南浦「一十→二十」先例）
+    (r'一十八年', '二十八年'),
+    # 卞五年→十五年（陳紫峰年譜 卞五年庚辰，卞/十形近）
+    (r'卞五年', '十五年'),
 ]
 
 def _apply_ocr_fixes(text):
@@ -605,8 +620,9 @@ def _load_learnings():
         'discovered_prefixes': {},    # {前綴: {source: 檔名, reign: 年號, invalidated: false}}
         'age_suffix_variants': {},    # {字形: {source: 檔名, invalidated: false}}
         'person_prefix_variants': {}, # {稱謂: {source: 檔名, invalidated: false}}
-        'corrections': [],            # [{type: 'reign'|'prefix'|'suffix', wrong: '', correct: '',
+        'corrections': [],            # [{type: 'reign'|'prefix'|'suffix'|'year_seq'|'ocr_ganzhi'|'manual', wrong: '', correct: '',
                                       #   source: 檔名, date: ISO}]
+        'ocr_candidates': {},         # {pair_key: {pair: ['乙亥','己亥'], context: '順治', count: N, sources: [...]}}
         'processed_files': [],        # [{file: 檔名, year_count: N, coverage: %,
                                       #   missed: N, format: 格式描述}]
     }
@@ -916,7 +932,13 @@ def self_learn(original_text, result, source_file='', report_lines=None):
 
 
 def _record_correction(learnings, corr_type, wrong_value, correct_value, source):
-    """記錄一個手動修正（用於從修正中學習）。"""
+    """記錄一個修正（用於從修正中學習）。
+
+    type：
+      'reign'/'prefix'/'suffix' — 既有：標記對應發現為無效
+      'ocr_ganzhi' — 干支形近字修正（如 順治乙亥→己亥）：累積候選規則
+      'year_seq'/'manual' — 年序誤標或一般人工修正，僅記帳（校勘，非 OCR）
+    """
     learnings.setdefault('corrections', [])
     learnings['corrections'].append({
         'type': corr_type,
@@ -933,6 +955,64 @@ def _record_correction(learnings, corr_type, wrong_value, correct_value, source)
         learnings['discovered_prefixes'][wrong_value]['invalidated'] = True
     elif corr_type == 'suffix' and wrong_value in learnings.get('age_suffix_variants', {}):
         learnings['age_suffix_variants'][wrong_value]['invalidated'] = True
+    elif corr_type == 'ocr_ganzhi':
+        _accumulate_ocr_candidate(learnings, wrong_value, correct_value, source)
+
+
+def _accumulate_ocr_candidate(learnings, wrong, correct, source):
+    """干支形近字修正 → 累積 OCR 候選規則（上下文約束 + 多來源置信度）。
+
+    只收「干支雙字中恰有一個字不同」的替換（己/乙、内/丙 形近字）；年序推論
+    錯誤（四年→二十四年）屬校勘非 OCR，不生成規則。規則附上下文約束（如所在
+    年號），避免打壞正確文本；不自動晉升 _OCR_FIXES——由 --status 列出高置信
+    候選，人工複核後手動升級。
+    """
+    wg = re.search(STEM_BRANCH, wrong)
+    cg = re.search(STEM_BRANCH, correct)
+    if not (wg and cg):
+        return
+    w, c = wg.group(0), cg.group(0)
+    if len(w) != 2 or len(c) != 2 or w == c:
+        return
+    if (w[0] != c[0]) == (w[1] != c[1]):
+        return  # 兩字皆變（非形近）或皆不變
+    if _ganzhi_index_of_pair(w) is None or _ganzhi_index_of_pair(c) is None:
+        return
+    ctx = ''
+    m = re.search(r'([一-鿿]{0,4})' + re.escape(w), wrong)
+    if m:
+        ctx = m.group(1)
+    key = f'{w}→{c}'
+    cand = learnings.setdefault('ocr_candidates', {}).setdefault(key, {
+        'pair': [w, c], 'context': ctx, 'count': 0, 'sources': []})
+    cand['count'] += 1
+    if ctx and not cand['context']:
+        cand['context'] = ctx
+    if source and source not in cand['sources']:
+        cand['sources'].append(source)
+    cand['date'] = __import__('datetime').datetime.now().isoformat()[:10]
+
+
+def record_manual_correction(wrong, correct, source=''):
+    """手動修正錄入：--record「錯」「對」[來源]。
+
+    干支形近字修正（單字替換，如 順治乙亥→己亥）→ ocr_ganzhi 候選規則；
+    其餘（年序/正文）→ 一般修正記帳（校勘，非 OCR）。
+    """
+    learnings = _load_learnings()
+    wg = re.search(STEM_BRANCH, wrong)
+    cg = re.search(STEM_BRANCH, correct)
+    is_gz = False
+    if wg and cg:
+        w, c = wg.group(0), cg.group(0)
+        is_gz = (w != c and len(w) == 2 and len(c) == 2
+                 and (w[0] != c[0]) != (w[1] != c[1])
+                 and _ganzhi_index_of_pair(w) is not None
+                 and _ganzhi_index_of_pair(c) is not None)
+    _record_correction(learnings, 'ocr_ganzhi' if is_gz else 'manual',
+                       wrong, correct, source)
+    _save_learnings(learnings)
+    return learnings, is_gz
 
 
 def prune_invalidated_learnings(learnings=None):
@@ -1073,6 +1153,16 @@ def print_learnings_summary():
         lines.append(f"\n▸ 修正記錄：{len(corrections)} 條")
         for c in corrections[-5:]:  # 只顯示最近5條
             lines.append(f"  {c['type']}：「{c['wrong']}」→「{c['correct']}」（{c.get('date', '?')}）")
+
+    # === 干支 OCR 候選規則 ===
+    ocr = learnings.get('ocr_candidates', {})
+    ready = {k: v for k, v in ocr.items() if v.get('count', 0) >= 2}
+    if ready:
+        lines.append("\n▸ 干支 OCR 候選（出現 ≥2 次，可考慮手動升級 _OCR_FIXES）：")
+        for k, v in ready.items():
+            lines.append(f"  {v['pair'][0]}→{v['pair'][1]}"
+                         f"（上下文「{v.get('context', '')}」，"
+                         f"{len(v.get('sources', []))} 來源，{v['count']} 次）")
 
     # === 處理統計 ===
     if files:
@@ -1229,6 +1319,8 @@ def _merge_multi_line_years(text, person_extra=None):
 def _make_heading(raw):
     """清理標題：移除方括註文〔〕，去除多餘空白標點。"""
     cleaned = re.sub(r'〔[^〕]*〕', '', raw)
+    # 殘留未閉合〔：註文只匹配到前半時（如「〔先生二十八歲」），無對應〕 的〔 一律清除
+    cleaned = re.sub(r'〔(?!.*〕)', '', cleaned)
     cleaned = cleaned.strip().rstrip('。，、, ')
     cleaned = re.sub(r'\s+', '', cleaned)
     # 句號用作干支與稱謂分隔符時（如「丙申。公四十一嵗」）改為逗號
@@ -1724,17 +1816,18 @@ def classify_format(text):
     n_modern = sum(1 for line in text.split('\n')
                    if try_parse_modern_heading(line, allow_plain=True) is not None)
 
-    return {
-        'person': n_person > 0 or bool(extra_person),
-        'no_person': n_no_person > 0,
-        'ad': n_ad > 0,
-        'bare': n_bare >= 5,
-        'bare_gz': n_bare_gz >= 5 and n_gz_age < 5,   # gz_age 優先（同譜兩者共存時不誤用行首裸干支）
-        'gz_age': n_gz_age >= 5,
-        'modern': n_modern >= 2,
-        '_person_extra': extra_person,
-        '_counts': (n_person, n_no_person, n_ad, n_bare, n_bare_gz, n_gz_age, n_modern),
-    }
+    # 判定表：閾值集中在此（None 表示 count>0 即觸發）；優先級互斥亦表驅動，
+    # 避免新增格式族時繼續堆疊 if（gz_age 優於 bare_gz：同譜兩者共存時不誤用行首裸干支）。
+    _THRESH = {'bare': 5, 'bare_gz': 5, 'gz_age': 5, 'modern': 2}
+    _ORDER = ['person', 'no_person', 'ad', 'bare', 'bare_gz', 'gz_age', 'modern']
+    counts = {'person': n_person, 'no_person': n_no_person, 'ad': n_ad,
+              'bare': n_bare, 'bare_gz': n_bare_gz, 'gz_age': n_gz_age, 'modern': n_modern}
+    fmt = {k: counts[k] >= _THRESH.get(k, 1) for k in _ORDER}
+    fmt['person'] = fmt['person'] or bool(extra_person)   # 傳主名前綴偵測亦算有稱謂
+    fmt['bare_gz'] = fmt['bare_gz'] and not fmt['gz_age']
+    fmt['_person_extra'] = extra_person
+    fmt['_counts'] = tuple(counts[k] for k in _ORDER)
+    return fmt
 
 
 def _build_full_pattern(fmt=None):
@@ -1757,11 +1850,14 @@ def _build_full_pattern(fmt=None):
     person = '(?:' + '|'.join(PERSON_PREFIXES + extra_person) + r')'
     pp = r'(?:中華)?(?:' + ap + r')?(?:' + ar + r')?'
 
-    # 出生條目：X年干支...先生生/公生/府君生
-    # 中間文字不跨句號，避免誤把「爲公生朝」等生日慶祝當成出生，並防止吞噬其後的真實年份條目
-    # gz_age 格式出生條目可帶前導干支（己亥順治十六年…先生生），避免「己亥」殘留正文
+    # 出生條目：X年干支...先生生/公生/府君生（含跨一句號變體，如「成化十三年丁酉
+    # 十月十六日庚戌戌時。先生生」——出生日期與「先生生」分句，陳紫峰年譜）
+    # 中間段禁冒號（：/：）：出生句不含引述，防止「…曰：治亂生於人心」的「生於」誤當出生
     _birth_sb = sb if (fmt or {}).get('gz_age') else ''
-    birth = r'(?:' + _birth_sb + r')?' + pp + y + r'年(?:' + sb + r')?' + r'[^。\n]*?' + person + r'生(?:於)?' + r'[，。、]?'
+    birth = (r'(?:' + _birth_sb + r')?' + pp + y + r'年(?:' + sb + r')?'
+             + r'(?:[^。\n：:]{0,120}?'                       # ① 同句：X年...先生生
+             + r'|[^。\n：:]{0,60}?。[^。\n：:]{0,60}?)'       # ② 跨一句號：X年...。先生生
+             + person + r'生(?:於)?' + r'[，。、]?')
 
     # 年份條目（有干支）
     # 匹配：可能前綴 + N年干支 + [最多120字，不含換行與句號] + 先生[年]N嵗
@@ -2396,6 +2492,64 @@ def _parse_heading_anchors(heading):
     return info
 
 
+def _consensus_birth_year(parsed, min_rate=0.6, min_sample=5):
+    """推定出生年（CBDB 缺席時的回退訊號）。
+
+    年譜錨點錯誤的主流是「年號年序」誤刻（許敬菴尾部整體錯一年、尙友堂掉
+    「十/二十/三十」），干支與年齡通常可信，故以 (干支, 年齡) 對推定出生年：
+      birth ≡ (ganzhi_idx − age_int + 5) (mod 60)
+    多數決一致率 ≥ min_rate 且樣本 ≥ min_sample 才算共識（對個別條目錯誤魯棒）。
+    若年號年序多數決（reign_ad − age + 1，含顯式公元）落在該餘類內且落在文本
+    年號 span 內，兩訊號互相佐證，直接採用；否則以文本年號 span 將餘類解為唯一
+    絕對年（最早條目年份 ≥ era_min−5、最晚條目年份 ≤ era_max）。無法判定回傳
+    None（不自動修，回歸人工）。
+    """
+    from collections import Counter
+    # ① (干支, 年齡) 餘類共識
+    gz_res = [((p['ganzhi_idx'] - p['age_int'] + 5) % 60)
+              for p in parsed if p['ganzhi_idx'] is not None and p['age_int'] is not None]
+    gz_residue = None
+    if len(gz_res) >= min_sample:
+        top, cnt = Counter(gz_res).most_common(1)[0]
+        if cnt / len(gz_res) >= min_rate:
+            gz_residue = top
+    # ② 年號年序多數決（含顯式公元，現代學者年譜）
+    rc = ([p['reign_ad'] - p['age_int'] + 1
+           for p in parsed if p['reign_ad'] is not None and p['age_int'] is not None]
+          + [p['ad_anchor_int'] - p['age_int'] + 1
+             for p in parsed if p['ad_anchor_int'] is not None and p['age_int'] is not None])
+    reign_major = None
+    if len(rc) >= min_sample:
+        top, cnt = Counter(rc).most_common(1)[0]
+        if cnt / len(rc) >= min_rate:
+            reign_major = top
+    if gz_residue is None:
+        return reign_major
+    # ③ 文本年號 span（唯一絕對年收斂用）
+    era_min = era_max = None
+    for p in parsed:
+        r, _ = extract_reign(p['raw'])
+        if r and r in REIGN_START_YEARS:
+            s = REIGN_START_YEARS[r]
+            e = REIGN_END_YEARS.get(r, s + 60)
+            era_min = s if era_min is None else min(era_min, s)
+            era_max = e if era_max is None else max(era_max, e)
+    ages = [p['age_int'] for p in parsed if p['age_int'] is not None]
+    lo, hi = (min(ages), max(ages)) if ages else (None, None)
+
+    def in_span(b):
+        return (era_min is not None and lo is not None
+                and b >= era_min - 5 and b + hi - 1 <= era_max)
+
+    if reign_major is not None and reign_major % 60 == gz_residue and in_span(reign_major):
+        return reign_major  # 兩訊號互相佐證
+    if era_min is None or lo is None:
+        return None
+    valid = [b for b in range(era_min - 5, era_max + 1)
+             if b % 60 == gz_residue and in_span(b)]
+    return valid[0] if len(valid) == 1 else None
+
+
 def verify_anchors(result):
     """三錨點一致性檢查：每個標題交叉驗證 年號年→公元、干支→公元、年齡→公元。
 
@@ -2407,21 +2561,12 @@ def verify_anchors(result):
     回傳 (suspects, seq_bad, birth_year, total)。
     """
     headings = [l for l in result.split('\n') if l.startswith('### ') or l.startswith('#### ')]
-    parsed = [_parse_heading_anchors(l) for l in headings]
-    parsed = [p for p in parsed if p['reign_ad'] is not None or p['age_int'] is not None]
+    parsed_all = [_parse_heading_anchors(l) for l in headings]
+    parsed = [p for p in parsed_all if p['reign_ad'] is not None or p['age_int'] is not None]
 
-    # 出生年共識：由「年號年→公元 − 年齡 + 1」多數決（1613、1662…）；現代學者年譜
-    # 亦可用「顯式公元 − 年齡 + 1」
-    birth_cands = [p['reign_ad'] - p['age_int'] + 1
-                   for p in parsed
-                   if p['reign_ad'] is not None and p['age_int'] is not None]
-    birth_cands += [p['ad_anchor_int'] - p['age_int'] + 1
-                    for p in parsed
-                    if p['ad_anchor_int'] is not None and p['age_int'] is not None]
-    birth_year = None
-    if birth_cands:
-        from collections import Counter
-        birth_year = Counter(birth_cands).most_common(1)[0][0]
+    # 出生年共識：以 (干支, 年齡) 餘類多數決為主、年號年序多數決佐證
+    # （_consensus_birth_year），對「年號年序系統性誤刻」魯棒；無法判定回傳 None。
+    birth_year = _consensus_birth_year(parsed_all)
 
     suspects = []
     for p in parsed:
@@ -2651,6 +2796,34 @@ def apply_fixes(result, fixes):
     return '\n'.join(out)
 
 
+def _anchor_fix_check(result, birth, source_desc):
+    """以內部共識出生年跑 suggest_fix（CBDB 缺席回退），印報告並回傳修正清單。
+
+    只動年號年序（suggest_fix 保守原則），干支/年齡/正文一律保留。
+    """
+    fixes = []
+    if not birth:
+        return fixes
+    lines_out = [f'── 錨點共識修正（{source_desc}）──']
+    for h in [l for l in result.split('\n') if l.startswith('### ')]:
+        try:
+            fixed = suggest_fix(h, birth, None)
+        except Exception:
+            continue
+        if fixed:
+            fixes.append((h, fixed))
+    if fixes:
+        lines_out.append(f'  ⚠ 建議修正 {len(fixes)} 條（年號年序誤標，干支/年齡已自洽）：')
+        for old, new in fixes[:8]:
+            lines_out.append(f'    {old[4:]} → {new[4:]}')
+        if len(fixes) > 8:
+            lines_out.append(f'    … 尚有 {len(fixes) - 8} 條')
+    else:
+        lines_out.append('  無需修正 ✓')
+    print('\n'.join(lines_out))
+    return fixes
+
+
 def _cbdb_check(result, person):
     """CBDB 核驗：輸出報告並回傳 (舊標題→新標題) 修正清單。"""
     fixes = []
@@ -2765,6 +2938,23 @@ def main():
         except UnicodeEncodeError: pass
         return
 
+    # --record「錯」「對」[來源]：錄入手動修正；干支形近字修正累積為 OCR 候選規則
+    # （反饋閉環：--status 列出出現 ≥2 次的候選，人工複核後升級 _OCR_FIXES）
+    if argv[0] == '--record':
+        if len(argv) < 3:
+            print("用法：nianpu_processor.py --record \"錯\" \"對\" [來源]"); sys.exit(1)
+        source = argv[3] if len(argv) > 3 else ''
+        learnings, is_gz = record_manual_correction(argv[1], argv[2], source)
+        if is_gz:
+            wg = re.search(STEM_BRANCH, argv[1]); cg = re.search(STEM_BRANCH, argv[2])
+            key = f'{wg.group(0)}→{cg.group(0)}'
+            cand = learnings.get('ocr_candidates', {}).get(key, {})
+            print(f"▸ 已記錄干支 OCR 候選：{key}"
+                  f"（上下文「{cand.get('context', '')}」，共 {cand.get('count', 0)} 次）")
+        else:
+            print("▸ 已記錄一般修正")
+        return
+
     # --check 對既有整理檔跑三錨點一致性檢查（不需重新處理；可加 --cbdb 附核驗/修正建議）
     if argv[0] == '--check':
         if len(argv) < 2:
@@ -2808,21 +2998,37 @@ def main():
     result, modern_report = process_nianpu(original, slots=slots)
 
     # CBDB 生卒年核驗 + 年號誤配自動修正（現代學者年譜已有標題，不適用 --fix 改寫）
-    if cbdb_requested and get_person and modern_report is None:
-        name = cbdb_name or (_cbdb_extract_name(original) if _cbdb_extract_name else None)
-        if name:
-            person = get_person(name)
-            if person and person.get('birth'):
-                fixes = _cbdb_check(result, person)
-                if fix_mode and fixes:
+    # --fix 在 CBDB 缺席時回退到內部「干支+年齡」共識出生年（_consensus_birth_year），
+    # 拔掉外部依賴——冷門傳主 / CBDB 無生卒日期者仍可自動修年號年序誤標。
+    if modern_report is None:
+        cbdb_birth = None
+        if cbdb_requested and get_person:
+            name = cbdb_name or (_cbdb_extract_name(original) if _cbdb_extract_name else None)
+            if name:
+                person = get_person(name)
+                if person and person.get('birth'):
+                    cbdb_birth = person['birth']
+                    fixes = _cbdb_check(result, person)
+                    if fix_mode and fixes:
+                        result = apply_fixes(result, fixes)
+                        print(f"▸ 已自動修正 {len(fixes)} 條年號年序誤標（干支/年齡保留）")
+                elif person:
+                    print(f"▸ CBDB 有「{name}」但無生卒日期，跳過 CBDB 核驗")
+                else:
+                    print(f"▸ CBDB 查無「{name}」，跳過 CBDB 核驗")
+            else:
+                print("▸ 無法自動判定傳主名，跳過 CBDB 核驗（可用 --cbdb <傳主名> 指定）")
+        if fix_mode and cbdb_birth is None:
+            _, _, anchor_birth, _ = verify_anchors(result)
+            if anchor_birth:
+                print(f"▸ CBDB 無可用生年，以內部共識出生年 {anchor_birth} 執行錨點修正")
+                fixes = _anchor_fix_check(result, anchor_birth,
+                                          f'內部共識出生年 {anchor_birth}')
+                if fixes:
                     result = apply_fixes(result, fixes)
                     print(f"▸ 已自動修正 {len(fixes)} 條年號年序誤標（干支/年齡保留）")
-            elif person:
-                print(f"▸ CBDB 有「{name}」但無生卒日期，跳過 CBDB 核驗")
             else:
-                print(f"▸ CBDB 查無「{name}」，跳過 CBDB 核驗")
-        else:
-            print("▸ 無法自動判定傳主名，跳過 CBDB 核驗（可用 --cbdb <傳主名> 指定）")
+                print("▸ 無可用生年（CBDB 無＋內部共識不足），跳過錨點修正")
 
     out.write_text(result, encoding='utf-8')
     print(f"寫入：{out}")

@@ -23,6 +23,7 @@ from __future__ import annotations
 SLOT_SCHEMA = {
     "reigns": "年譜使用的年號（如 同治/光緒/民國…）；無則空串列",
     "year_style": "紀年形式：reign_seq（年號N年）| ganzhi_only（僅干支）| ad（公元N年）| minguo（民國N年）| mixed",
+    "gz_age": "干支直接接年齡（bool，如 庚子二歲／丙戌，年四十八歲；無年號前綴，年號僅出生條目與更替處）",
     "uses_ganzhi": "是否帶干支（bool）",
     "person_prefix": "年齡前綴：先生|公|府君|傳主名（直接填名字，如 希濤）|無",
     "age_connector": "前綴與年齡間的連接字：年|無",
@@ -140,6 +141,13 @@ FEWSHOT = [
                "bare_years": True, "has_birth_entry": True, "birth_form": "公生",
                "monthly_split": True, "modern_heading": False, "cross_line": False,
                "default_reign": "", "ocr_variants": {"内午": "丙午", "内申": "丙申", "壬戍": "壬戌"}}},
+    {"name": "李恕谷先生年譜", "format": "干支+直接年齡（gz_age）",
+     "slots": {"reigns": ["順治", "康熙", "雍正"], "year_style": "ganzhi_only",
+               "gz_age": True, "uses_ganzhi": True, "person_prefix": "先生",
+               "age_connector": "年", "age_suffix": "嵗", "age_position": "緊跟干支",
+               "no_person": False, "bare_years": False, "has_birth_entry": True,
+               "birth_form": "先生生", "monthly_split": False, "modern_heading": False,
+               "cross_line": False, "default_reign": "", "ocr_variants": {}}},
 ]
 
 PROMPT_TEMPLATE = """你是年譜格式分析器。把「每年譜改一次正則」變成「填一張語義槽位表」。
@@ -222,9 +230,14 @@ def slots_to_fmt(slots: dict) -> dict:
         "bare": bool((slots or {}).get("bare_years")),
         # 行首裸干支年標（重刻鄭端簡公年譜等）：全譜以「庚申、」「己亥春入京」行首裸干支紀年
         "bare_gz": bool((slots or {}).get("year_style") == "ganzhi_only"),
+        # 干支+直接年齡（李恕谷先生年譜等）：庚子二歲／丙戌，年四十八歲
+        "gz_age": bool((slots or {}).get("gz_age")),
         "modern": bool((slots or {}).get("modern_heading")),
         "_person_extra": extra,
     }
+    # 優先級互斥：gz_age（干支+直接年齡）與 bare_gz（行首裸干支）同譜共存時不誤用行首裸干支
+    if fmt["gz_age"]:
+        fmt["bare_gz"] = False
     # 無稱謂直接年齡格式：no_person 為真，person 為假
     if fmt["no_person"]:
         fmt["person"] = False
