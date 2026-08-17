@@ -49,11 +49,32 @@ CASES = [
     ("黃黎洲先生年譜", r"黃黎洲先生年譜\黃黎洲先生年譜_完整.txt", r"黃黎洲先生年譜\黃黎洲先生年譜_已整理.md"),
     ("紫陽文公先生年譜", r"紫陽文公先生年譜\紫陽文公先生年譜_完整.txt", r"紫陽文公先生年譜\紫陽文公先生年譜_已整理.md"),
     ("唐一庵先生年譜", r"唐一庵先生年譜\唐一庵先生年譜_完整.txt", r"唐一庵先生年譜\唐一庵先生年譜_已整理.md"),
+    # ── v3.15 以後新增（對照 年譜整理本/_清單.tsv）──
+    ("許敬菴先生年譜", r"330000-1705-0018171.許敬菴先生年譜存稿不分卷.清稿本_ocr\330000-1705-0018171.許敬菴先生年譜存稿不分卷.清稿本_完整.md", r"330000-1705-0018171.許敬菴先生年譜存稿不分卷.清稿本_ocr\許敬菴先生年譜_已整理.md"),
+    ("傅青山先生年譜", r"傅青山先生年譜\傅青山先生年譜_完整.txt", r"傅青山先生年譜\傅青山先生年譜_已整理.md"),
+    ("朱文端公年譜", r"朱文端公年譜\朱文端公年譜_完整.txt", r"朱文端公年譜\朱文端公年譜_已整理.md"),
+    ("桐城吳先生年譜", r"桐城吳先生年譜\桐城吳先生年譜_單版.md", r"桐城吳先生年譜\桐城吳先生年譜_單版_已整理.md"),
+    ("劉熙載年譜", r"刘熙载年谱14469130.pdf_by_PaddleOCR-VL-1.6.md", r"刘熙载年谱14469130.pdf_by_PaddleOCR-VL-1.6_已整理.md"),
+    ("王欣夫先生編年事輯稿", r"王欣夫先生編年事輯稿1.pdf_by_PaddleOCR-VL-1.6.md", r"王欣夫先生編年事輯稿1.pdf_by_PaddleOCR-VL-1.6_已整理.md"),
+    ("袁觀瀾先生手編年譜", r"袁观澜先生年谱_合并_已整理_merged_pun\袁观澜先生年谱_合并.md", r"袁观澜先生年谱_合并_已整理_merged_pun\袁观澜先生年谱_合并_merged_定稿.md"),
+    ("重刻鄭端簡公年譜", r"重刻鄭端簡公年譜\重刻鄭端簡公年譜_完整.txt", r"重刻鄭端簡公年譜\重刻鄭端簡公年譜_已整理.md"),
+    ("關中李二曲先生履歷紀略", r"關中李二曲先生履歷紀略\關中李二曲先生履歷紀略_完整.txt", r"關中李二曲先生履歷紀略\關中李二曲先生履歷紀略_已整理.md"),
+    ("陽明先生年譜", r"陽明先生年譜\陽明先生年譜_完整.txt", r"陽明先生年譜\陽明先生年譜_已整理.md"),
+    ("焦南浦先生年譜", r"E:\2022\个人研究资料\年谱项目\原始\焦南浦先生年譜.附錄增附清.焦以敬.清.焦以恕編.清光緒23年.fid001896766\_pre\正文_raw.txt", r"E:\2022\个人研究资料\年谱项目\原始\焦南浦先生年譜.附錄增附清.焦以敬.清.焦以恕編.清光緒23年.fid001896766\_pre\焦南浦先生年譜_整理定稿.md"),
+    ("李恕谷先生年譜", r"李恕谷先生年譜\李恕谷先生年譜_完整.txt", r"李恕谷先生年譜\李恕谷先生年譜_已整理.md"),
+    ("二曲先生年譜", r"二曲先生年譜\二曲先生年譜_完整.txt", r"二曲先生年譜\二曲先生年譜_已整理.md"),
+    ("陳紫峰先生年譜", r"陳紫峰先生年譜\陳紫峰先生年譜_完整.txt", r"陳紫峰先生年譜\陳紫峰先生年譜_定稿.md"),
+    ("陳碩甫先生年譜", r"年譜整理本\陈硕甫先生年谱.md", r"年譜整理本\陈硕甫先生年谱.md"),
+    ("蕺山先生年譜", r"蕺山先生年譜\蕺山先生年譜_完整.txt", r"蕺山先生年譜\蕺山先生年譜_已整理.md"),
 ]
 # 無年齡格式（純年份/純干支）等 anchor 多數決推不出出生年者，手動補
-MANUAL_BIRTH = {"紫陽文公先生年譜": 1130, "魏貞庵先生年譜": 1616}
+MANUAL_BIRTH = {"紫陽文公先生年譜": 1130, "魏貞庵先生年譜": 1616,
+                "關中李二曲先生履歷紀略": 1645, "焦南浦先生年譜": 1661,
+                "重刻鄭端簡公年譜": 1499, "陳碩甫先生年譜": 1786}
 # 無年齡純年份格式：卒年無法由年齡推出，且源文本附録/追封條目會把 D 推遠，手動指定卒年
-MANUAL_DEATH = {"紫陽文公先生年譜": 1200, "方柏堂先生譜系略": 1888}
+MANUAL_DEATH = {"紫陽文公先生年譜": 1200, "方柏堂先生譜系略": 1888,
+                "關中李二曲先生履歷紀略": 1689, "焦南浦先生年譜": 1736,
+                "陳碩甫先生年譜": 1863}
 
 DIG = "零一二三四五六七八九"
 
@@ -128,6 +149,8 @@ def resolve_heading_year(h, B, prev_year=None):
     """依 年齡→(年號∧干支一致)→唯一干支→年號→就近干支 推標題的公元年。"""
     info = np._parse_heading_anchors(h)
     age, gz_idx, reign_ad = info["age_int"], info["ganzhi_idx"], info["reign_ad"]
+    if info.get("ad_anchor_int") is not None:   # 顯式公元年（現代格式／（1666年）註記）最可靠
+        return info["ad_anchor_int"]
     if age is not None:
         return B + age - 1
     cands = [y for y in range(B - 1, B + 111) if (y - 4) % 60 == gz_idx] if gz_idx is not None else []
@@ -196,12 +219,27 @@ def source_has_year(Y, B, src):
 
 
 def derive_birth_from_ages(headings):
-    """無年號標注的檔案：用「干支+年齡」多數決推出生年。"""
-    pairs = []
+    """用標題的錨點推出生年。優先「顯式絕對年」（公元年／年號年序 − 年齡 + 1）
+    多數決；無絕對年時退回 (干支, 年齡) 餘類多數決，並以絕對年眾數去掉 mod-60
+    歧義（同餘候選中取離眾數最近者）。
+    """
+    from collections import Counter
+    abs_cands, pairs = [], []
     for h in headings:
         info = np._parse_heading_anchors(h)
-        if info["age_int"] is not None and info["ganzhi_idx"] is not None:
-            pairs.append((info["age_int"], info["ganzhi_idx"]))
+        age = info["age_int"]
+        if age is None:
+            continue
+        if info.get("ad_anchor_int") is not None:
+            abs_cands.append(info["ad_anchor_int"] - age + 1)
+        elif info["reign_ad"] is not None:
+            abs_cands.append(info["reign_ad"] - age + 1)
+        if info["ganzhi_idx"] is not None:
+            pairs.append((age, info["ganzhi_idx"]))
+    if abs_cands:
+        top, cnt = Counter(abs_cands).most_common(1)[0]
+        if cnt / len(abs_cands) >= 0.5:
+            return top
     if not pairs:
         return None
     best, best_n = None, -1
@@ -209,6 +247,10 @@ def derive_birth_from_ages(headings):
         n = sum(1 for age, gz in pairs if (B + age - 1 - 4) % 60 == gz)
         if n > best_n:
             best, best_n = B, n
+    if abs_cands:
+        m = Counter(abs_cands).most_common(1)[0][0]
+        cands = [b for b in range(1400, 1951) if (b - best) % 60 == 0]
+        return min(cands, key=lambda b: abs(b - m))
     return best
 
 
@@ -217,7 +259,8 @@ def analyze(base, label, src_rel, out_rel):
     out = read(path(base, out_rel))
     suspects, seq_bad, birth_anchor, total_all = np.verify_anchors(out)
 
-    headings = [l[4:].strip() for l in out.split('\n') if l.startswith('### ')]
+    headings = [l[5:].strip() if l.startswith('#### ') else l[4:].strip()
+                for l in out.split('\n') if l.startswith('### ') or l.startswith('#### ')]
     B = birth_anchor or MANUAL_BIRTH.get(label) or derive_birth_from_ages(headings)
     if B is None:
         for h in headings:
