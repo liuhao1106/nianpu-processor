@@ -10,9 +10,9 @@ RAG 檢索效果：用相同 BM25 檢索回答「某人在 25/35/45/55 歲做什
 用法：
   python nianpu_rag_compare.py <年譜資料目錄> [年齡清單...]
   例：
-    python nianpu_rag_compare.py "d:/workbuddy project/download"
-    python nianpu_rag_compare.py "d:/workbuddy project/download" 25 35 45 55
-    python nianpu_rag_compare.py "d:/workbuddy project/download" --json   # 輸出 JSON
+    python nianpu_rag_compare.py "E:/2022/个人研究资料/年谱项目"
+  python nianpu_rag_compare.py "E:/2022/个人研究资料/年谱项目" 25 35 45 55
+  python nianpu_rag_compare.py "E:/2022/个人研究资料/年谱项目" --json   # 輸出 JSON
 
 自動偵測：
   * 整理後檔：目錄下「*_已整理.md」
@@ -75,18 +75,31 @@ def _ganzhi_of_ad(ad):
 
 # ---------- 檔案配對 ----------
 def find_pairs(dirpath):
-    """在目錄（含子目錄）下找 (name, before_path, after_path) 清單。"""
+    """在目錄（含子目錄）下找 (name, before_path, after_path) 清單。
+
+    整理後檔（*_已整理.md）可能與整理前檔分屬不同分類：
+    先找同資料夾的「*_完整」/同名原始檔；找不到時再到整棵樹搜同名「*_完整」
+    或同名原始檔（例如 年譜整理稿 的 _已整理 對應 年譜原始PDF/識典數據 的原始檔）。
+    """
     d = Path(dirpath)
     pairs = []
     for after in sorted(d.rglob('*_已整理.md')):
         raw_stem = after.stem.replace('_已整理', '')
         before = None
-        cand_full = after.parent / (raw_stem + '_完整.md')
-        cand_raw = after.parent / (raw_stem + '.md')
-        if cand_full.exists():
-            before = cand_full
-        elif cand_raw.exists() and cand_raw != after:
-            before = cand_raw
+        for c in (after.parent / (raw_stem + '_完整.md'), after.parent / (raw_stem + '.md')):
+            if c.exists() and c != after:
+                before = c; break
+        if before is None:
+            cands = sorted([c for c in d.rglob(raw_stem + '_完整.*')
+                            if c.suffix in ('.md', '.txt') and c != after])
+            if cands:
+                before = cands[0]
+        if before is None:
+            cands = sorted([c for c in d.rglob(raw_stem + '.*')
+                            if c != after and c.suffix in ('.md', '.txt')
+                            and '_已整理' not in c.stem])
+            if cands:
+                before = cands[0]
         if before is not None:
             pairs.append((after.stem, str(before), str(after)))
     return pairs

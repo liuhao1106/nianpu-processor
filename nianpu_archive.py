@@ -12,7 +12,7 @@
   --book  本資料夾檔名（不含 .md），預設由定稿檔名去尾碼推得（_整理定稿/_定稿/_已整理/_整理/_完整/_合并…）
   --date  整理日期，預設取定稿檔案的修改日期
   --note  清單備註
-  --dir   整理本資料夾，預設 D:/workbuddy project/download/年譜整理本
+  --dir   整理本資料夾，預設 E:/2022/个人研究资料/年谱项目/年譜整理稿/年譜整理本
 
 若「書名.md」已在清單中（同書再版），改為更新該列而非新增；清單部數隨之刷新。
 """
@@ -28,7 +28,7 @@ try:
 except Exception:
     pass
 
-DEFAULT_ARCHIVE_DIR = Path(r'D:/workbuddy project/download/年譜整理本')
+DEFAULT_ARCHIVE_DIR = Path(r'E:/2022/个人研究资料/年谱项目/年譜整理稿/年譜整理本')
 MANIFEST_MD = '_清單.md'
 MANIFEST_TSV = '_清單.tsv'
 
@@ -65,10 +65,10 @@ def read_text(path):
 
 
 def source_path_str(src, archive_dir):
-    """來源路徑：在 download 根目錄下用相對路徑，否則用絕對路徑。"""
-    download_root = archive_dir.parent
+    """來源路徑：在「年谱项目」根目錄下用相對路徑（含分類前綴），否則用絕對路徑。"""
+    root = archive_dir.parent.parent  # 年譜整理稿 → 年谱项目
     try:
-        rel = Path(os_relpath(src, download_root))
+        rel = Path(os_relpath(src, root))
     except Exception:
         rel = Path(str(src))
     if str(rel).startswith('..'):
@@ -173,7 +173,7 @@ def main():
     fields_tsv = [f'{book}.md', book, orig_name, src_path, date, note]
     src_dir = str(Path(src_path).parent)
     if src_dir == '.':
-        src_dir = 'download 根目錄'  # 來源直接在 download 根目錄下
+        src_dir = '年譜整理稿 根目錄'  # 來源直接在年譜整理稿根目錄下
     fields_md = [f'{book}.md', orig_name, src_dir, date, note]
 
     ok = True
