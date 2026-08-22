@@ -223,5 +223,14 @@
   "death": 1870,
   "years_lived": "50",
   "dynasty": "清"
+ },
+ "是鏡": {
+  "id": "84852",
+  "name": "是鏡",
+  "eng": "Shi Jing",
+  "birth": 1693,
+  "death": 1769,
+  "years_lived": "77",
+  "dynasty": "清"
  }
 }
