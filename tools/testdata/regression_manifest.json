@@ -1,0 +1,14 @@
+{
+  "_comment": "年譜工具回歸測試清單。mode: exact=行為快照全比對＋標題數與黃金輸出一致；metric=容差比對；smoke=只跑通。format 為格式族標籤（classify_format）。slots 為 --slots 槽位 JSON（一般為 null）。",
+  "cases": [
+    {"name": "文貞公年譜", "source": "文貞公年譜_source.md", "golden": "文貞公年譜_golden.md", "format": "公年N歲", "mode": "exact", "slots": null},
+    {"name": "方柏堂先生譜系略", "source": "方柏堂先生譜系略_source.md", "golden": "方柏堂先生譜系略_golden.md", "format": "先生年N嵗", "mode": "metric", "slots": null},
+    {"name": "萬清軒先生年譜", "source": "萬清軒先生年譜_source.md", "golden": "萬清軒先生年譜_golden.md", "format": "直接年齡型", "mode": "metric", "slots": null},
+    {"name": "陳紫峰先生年譜", "source": "陳紫峰先生年譜_source.md", "golden": "陳紫峰先生年譜_golden.md", "format": "先生N歲（〔〕年齡註解）", "mode": "exact", "slots": null},
+    {"name": "警石府君年譜", "source": "警石府君年譜_source.md", "golden": "警石府君年譜_golden.md", "format": "府君年N歲", "mode": "exact", "slots": null},
+    {"name": "殷譜經侍郎自定年譜", "source": "殷譜經侍郎自定年譜_source.md", "golden": "殷譜經侍郎自定年譜_golden.md", "format": "無稱謂直接附年齡", "mode": "exact", "slots": null},
+    {"name": "紫陽文公先生年譜", "source": "紫陽文公先生年譜_source.md", "golden": "紫陽文公先生年譜_golden.md", "format": "無年齡純年份", "mode": "metric", "slots": null},
+    {"name": "重刻鄭端簡公年譜", "source": "重刻鄭端簡公年譜_source.md", "golden": "重刻鄭端簡公年譜_golden.md", "format": "行首裸干支", "mode": "metric", "slots": null},
+    {"name": "王欣夫先生編年事輯稿1", "source": "王欣夫先生編年事輯稿1_source.md", "golden": "王欣夫先生編年事輯稿1_golden.md", "format": "現代學者整理本 B", "mode": "exact", "slots": null}
+  ]
+}
