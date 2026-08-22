@@ -12,12 +12,12 @@
   --book  本資料夾檔名（不含 .md），預設由定稿檔名去尾碼推得（_整理定稿/_定稿/_已整理/_整理/_完整/_合并…）
   --date  整理日期，預設取定稿檔案的修改日期
   --note  清單備註
-  --dir   整理本資料夾，預設 E:/2022/个人研究资料/年谱项目/年譜整理稿/年譜整理本
+  --dir   整理本資料夾，預設 $NIANPU_ROOT/年譜整理稿/年譜整理本（NIANPU_ROOT 未設時為 E:/2022/个人研究资料/年谱项目）
 
 若「書名.md」已在清單中（同書再版），改為更新該列而非新增；清單部數隨之刷新。
 """
 
-import re, sys
+import os, re, sys
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -28,7 +28,9 @@ try:
 except Exception:
     pass
 
-DEFAULT_ARCHIVE_DIR = Path(r'E:/2022/个人研究资料/年谱项目/年譜整理稿/年譜整理本')
+# 年譜項目根目錄：可用環境變數 NIANPU_ROOT 覆蓋（換機只需設定一次，預設為原 E: 路徑）
+PROJECT_ROOT = Path(os.environ.get('NIANPU_ROOT', r'E:/2022/个人研究资料/年谱项目'))
+DEFAULT_ARCHIVE_DIR = PROJECT_ROOT / '年譜整理稿' / '年譜整理本'
 MANIFEST_MD = '_清單.md'
 MANIFEST_TSV = '_清單.tsv'
 

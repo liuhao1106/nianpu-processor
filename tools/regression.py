@@ -50,7 +50,8 @@ TESTDATA_DIR = TOOLS_DIR / 'testdata'
 MANIFEST_PATH = TESTDATA_DIR / 'regression_manifest.json'
 BASELINE_PATH = TESTDATA_DIR / 'regression_baseline.json'
 
-FULL_LIB_ROOT = r'E:/2022/个人研究资料/年谱项目/識典數據'
+# --full 全庫掃描根目錄：可用環境變數 NIANPU_ROOT 覆蓋（換機只需設定一次）
+FULL_LIB_ROOT = os.path.join(os.environ.get('NIANPU_ROOT', r'E:/2022/个人研究资料/年谱项目'), '識典數據')
 
 sys.path.insert(0, str(SKILL_DIR))
 import nianpu_processor as NP  # noqa: E402

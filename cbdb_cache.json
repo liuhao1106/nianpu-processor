@@ -1,0 +1,227 @@
+{
+ "錢泰吉": {
+  "id": "29767",
+  "name": "錢泰吉",
+  "eng": "Qian Taiji",
+  "birth": 1791,
+  "death": 1863,
+  "years_lived": "73",
+  "dynasty": "清"
+ },
+ "萬斛泉": {
+  "id": "70853",
+  "name": "萬斛泉",
+  "eng": "Wan Huquan",
+  "birth": 1808,
+  "death": 1904,
+  "years_lived": "97",
+  "dynasty": "清"
+ },
+ "張伯行": {
+  "id": "30621",
+  "name": "張伯行",
+  "eng": "Zhang Boxing",
+  "birth": 1651,
+  "death": 1725,
+  "years_lived": "75",
+  "dynasty": "清"
+ },
+ "顧炎武": {
+  "id": "34252",
+  "name": "顧炎武",
+  "eng": "Gu Yanwu",
+  "birth": 1613,
+  "death": 1682,
+  "years_lived": "70",
+  "dynasty": "清"
+ },
+ "李光地": {
+  "id": "59056",
+  "name": "李光地",
+  "eng": "Li Guangdi",
+  "birth": 1642,
+  "death": 1718,
+  "years_lived": "77",
+  "dynasty": "清"
+ },
+ "洪汝奎": {
+  "id": "85327",
+  "name": "洪汝奎",
+  "eng": "Hong Rukui",
+  "birth": 1824,
+  "death": 1886,
+  "years_lived": "63",
+  "dynasty": "清"
+ },
+ "唐樞": {
+  "id": "68378",
+  "name": "唐樞",
+  "eng": "Tang Shu",
+  "birth": null,
+  "death": null,
+  "years_lived": "",
+  "dynasty": "明"
+ },
+ "殷兆鏞": {
+  "id": "55684",
+  "name": "殷兆鏞",
+  "eng": "Yin Zhaoyong",
+  "birth": 1806,
+  "death": 1883,
+  "years_lived": "78",
+  "dynasty": "清"
+ },
+ "黃宗羲": {
+  "id": "30713",
+  "name": "黃宗羲",
+  "eng": "Huang Zongxi",
+  "birth": 1610,
+  "death": 1695,
+  "years_lived": "86",
+  "dynasty": "清"
+ },
+ "王夫之": {
+  "id": "65721",
+  "name": "王夫之",
+  "eng": "Wang Fuzhi",
+  "birth": 1619,
+  "death": 1692,
+  "years_lived": "74",
+  "dynasty": "清"
+ },
+ "澤南": {
+  "id": "65979",
+  "name": "羅澤南",
+  "eng": "Luo Zenan",
+  "birth": 1807,
+  "death": 1856,
+  "years_lived": "50",
+  "dynasty": "清"
+ },
+ "朱熹": {
+  "id": "3257",
+  "name": "朱熹",
+  "eng": "Zhu Xi",
+  "birth": 1130,
+  "death": 1200,
+  "years_lived": "71",
+  "dynasty": "宋"
+ },
+ "羅澤南": {
+  "id": "65979",
+  "name": "羅澤南",
+  "eng": "Luo Zenan",
+  "birth": 1807,
+  "death": 1856,
+  "years_lived": "50",
+  "dynasty": "清"
+ },
+ "吳廷棟": {
+  "id": "58872",
+  "name": "吳廷棟",
+  "eng": "Wu Tingdong",
+  "birth": 1793,
+  "death": 1873,
+  "years_lived": "81",
+  "dynasty": "清"
+ },
+ "傅山": {
+  "id": "30248",
+  "name": "傅山",
+  "eng": "Fu Shan",
+  "birth": 1602,
+  "death": 1683,
+  "years_lived": "82",
+  "dynasty": "清"
+ },
+ "劉宗周": {
+  "id": "34748",
+  "name": "劉宗周",
+  "eng": "Liu Zongzhou",
+  "birth": 1578,
+  "death": 1645,
+  "years_lived": "68",
+  "dynasty": "明"
+ },
+ "吳汝綸": {
+  "id": "54451",
+  "name": "吳汝綸",
+  "eng": "Wu Rulun",
+  "birth": 1840,
+  "death": 1903,
+  "years_lived": "64",
+  "dynasty": "清"
+ },
+ "朱軾": {
+  "id": "16592",
+  "name": "朱軾",
+  "eng": "Zhu Shi (2)",
+  "birth": 0,
+  "death": 0,
+  "years_lived": "0",
+  "dynasty": "宋"
+ },
+ "鄭曉": {
+  "id": "29589",
+  "name": "鄭曉",
+  "eng": "Zheng Xiao",
+  "birth": 1499,
+  "death": 1566,
+  "years_lived": "68",
+  "dynasty": "明"
+ },
+ "李顒": {
+  "id": "24260",
+  "name": "李顒",
+  "eng": "Li Yong",
+  "birth": 0,
+  "death": 0,
+  "years_lived": "0",
+  "dynasty": "五代"
+ },
+ "許孚遠": {
+  "id": "29721",
+  "name": "許孚遠",
+  "eng": "Xu Fuyuan",
+  "birth": 1535,
+  "death": 1604,
+  "years_lived": "70",
+  "dynasty": "明"
+ },
+ "李塨": {
+  "id": "33498",
+  "name": "李塨",
+  "eng": "Li Gong",
+  "birth": 1659,
+  "death": 1733,
+  "years_lived": "75",
+  "dynasty": "清"
+ },
+ "陳琛": {
+  "id": "374433",
+  "name": "俞長策",
+  "eng": "Yu Changce",
+  "birth": null,
+  "death": null,
+  "years_lived": "",
+  "dynasty": "清"
+ },
+ "陳奐": {
+  "id": "485444",
+  "name": "陳奐",
+  "eng": "Chen Huan",
+  "birth": null,
+  "death": null,
+  "years_lived": "",
+  "dynasty": "明"
+ },
+ "馬新貽": {
+  "id": "60761",
+  "name": "馬新貽",
+  "eng": "Ma Xinyi",
+  "birth": 1821,
+  "death": 1870,
+  "years_lived": "50",
+  "dynasty": "清"
+ }
+}
