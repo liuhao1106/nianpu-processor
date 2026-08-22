@@ -68,5 +68,4 @@ python tools/regression.py --run                       # 改動腳本後必跑�
 | [docs/整理前後RAG效果對比報告.md](docs/整理前後RAG效果對比報告.md) | 整理價值實證（BM25 受限預算召回率） |
 | [docs/年譜整理工具測試報告.md](docs/年譜整理工具測試報告.md) | 全量實測報告（覆蓋率/CBDB/三錨點/--fix/仲裁） |
 | [docs/進化路線圖.md](docs/進化路線圖.md) | 後續進化方向（事件層、曆法引擎、校勘證據鏈等） |
-| [docs/數字人文基礎項目評估.md](docs/數字人文基礎項目評估.md) | 項目 DH 定位自評 |
 | [../nianpu-social-network/SKILL.md](../nianpu-social-network/SKILL.md) | 下游延伸：人際網絡數據提取（hyperextract） |
