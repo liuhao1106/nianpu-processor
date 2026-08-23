@@ -440,6 +440,31 @@ def _expand_gz_age_heading(heading, birth_ref, dynasty):
     return None
 
 
+def _expand_pure_age_heading(heading, birth_ref, dynasty):
+    """純年齡標題（曹月川先生年譜等）：
+    「N歲」 → 「年號N年干支+選歲」依出生年＋年齡−1 推算（_ad_to_reign＋干支週期）；
+    「年號N年干支」（出生條目）→ 原樣保留（annotate_ad_years 補公元年）。失敗回傳 None。"""
+    m = re.match(r'^(?P<digits>' + AGE_DIGITS + r')(?P<suf>[' + AGE_SUFFIXES + r'])$', heading)
+    if m:
+        age = _chinese_year_to_int(m.group('digits'))
+        if not age or not (0 < age < 150):
+            return None
+        _, birth_ad, _reign = birth_ref
+        ad = birth_ad + age - 1
+        rr = _ad_to_reign(ad, dynasty)
+        if not rr:
+            return None
+        reign, seq = rr
+        year_cn = _int_to_chinese_year(seq)
+        gz = _ganzhi_pair_of_ad(ad)
+        return f'{reign}{year_cn}年{gz}{m.group(0)}'
+    # 出生條目（年號N年干支）：「洪武九年丙辰」原樣保留（annotate_ad_years 補公元年）
+    if re.match(r'(?:' + '|'.join(REIGNS) + r')' + _build_year_pattern() + r'年'
+                + STEM_BRANCH + r'$', heading):
+        return heading
+    return None
+
+
 # ======== OCR 容錯修正 ========
 
 _OCR_FIXES = [
@@ -1346,7 +1371,8 @@ def _merge_broken_lines(text):
     )
     while i < len(lines):
         line = lines[i]
-        if line.startswith('#') or line.startswith('=') or not line.strip():
+        # 標記列表項（- x）不與前行合併（卷首 metadata 清單，如 中華古籍智慧平台 匯出格式）
+        if line.startswith('#') or line.startswith('=') or not line.strip() or line.lstrip().startswith('- '):
             merged.append(line); i += 1; continue
         c = line
         while i + 1 < len(lines):
@@ -1808,6 +1834,17 @@ def classify_format(text):
     )
     n_gz_age = len(gz_age_pat.findall(text))
 
+    # 純年齡（行首/句末「N歲，」無任何紀年錨點；曹月川先生年譜等）：
+    # 全譜僅以年齡紀年，唯一紀年錨點是出生條目（年號N年干支…生）。
+    # 需出生條目可被 _find_gz_age_birth_ref 解析（年號播種）才啟用；
+    # 連續 ≥5 避免散文誤觸發；與其他格式族互斥（判定表 below）。
+    pure_age_pat = re.compile(
+        r'(?:(?:^|(?<=\n))\s*' + an + as_req + r')'           # 行首：不需後接標點（二十歲嘗曰）
+        + r'|(?<=[。！？；〕])' + an + as_req + r'(?:[，,、。]|(?=[春夏秋冬]))'  # 句中：需標點/季節
+    )
+    n_pure_age = len(pure_age_pat.findall(text))
+    pure_age_birth_ok = _find_gz_age_birth_ref(text) is not None
+
     # 現代學者年譜：已有年份標題（年號N年 干支 公元年 年齡），非待切分。
     # 判定：≥2 行能被 try_parse_modern_heading(allow_plain=True) 解析——
     # 含帶 # 前綴標題與無 # 前綴的純文字獨立年份行（四錨點覆蓋整行）。
@@ -1818,13 +1855,17 @@ def classify_format(text):
 
     # 判定表：閾值集中在此（None 表示 count>0 即觸發）；優先級互斥亦表驅動，
     # 避免新增格式族時繼續堆疊 if（gz_age 優於 bare_gz：同譜兩者共存時不誤用行首裸干支）。
-    _THRESH = {'bare': 5, 'bare_gz': 5, 'gz_age': 5, 'modern': 2}
-    _ORDER = ['person', 'no_person', 'ad', 'bare', 'bare_gz', 'gz_age', 'modern']
+    _THRESH = {'bare': 5, 'bare_gz': 5, 'gz_age': 5, 'pure_age': 5, 'modern': 2}
+    _ORDER = ['person', 'no_person', 'ad', 'bare', 'bare_gz', 'gz_age', 'pure_age', 'modern']
     counts = {'person': n_person, 'no_person': n_no_person, 'ad': n_ad,
-              'bare': n_bare, 'bare_gz': n_bare_gz, 'gz_age': n_gz_age, 'modern': n_modern}
+              'bare': n_bare, 'bare_gz': n_bare_gz, 'gz_age': n_gz_age,
+              'pure_age': n_pure_age, 'modern': n_modern}
     fmt = {k: counts[k] >= _THRESH.get(k, 1) for k in _ORDER}
     fmt['person'] = fmt['person'] or bool(extra_person)   # 傳主名前綴偵測亦算有稱謂
     fmt['bare_gz'] = fmt['bare_gz'] and not fmt['gz_age']
+    # 純年齡只在此譜無任何其他格式族時啟用（避免干擾萬清軒/李恕谷等既有格式）
+    fmt['pure_age'] = fmt['pure_age'] and pure_age_birth_ok and not any(
+        fmt[k] for k in ('person', 'no_person', 'ad', 'bare', 'bare_gz', 'gz_age', 'modern'))
     fmt['_person_extra'] = extra_person
     fmt['_counts'] = tuple(counts[k] for k in _ORDER)
     return fmt
@@ -2003,6 +2044,24 @@ def _build_full_pattern(fmt=None):
         + r'[，。、]?'                    # 消耗年齡後綴後的標點（避免正文殘留「，孝慤…」）
     )
 
+    # 純年齡（曹月川先生年譜等：全譜僅以「N歲，」紀年，無年號/干支錨點）：
+    # — entry_pure_age_birth：出生條目「年號N年干支」原子化（僅消費紀年錨點，
+    #   日期與「生」動詞留在正文），_expand_pure_age_heading 原樣保留為出生標題
+    # — entry_pure_age：消費「N歲（，）」＋後接標點；年號年序/干支/公元年由
+    #   insert() 依出生條目（出生年＋年齡−1）推算
+    entry_pure_age_birth = (
+        r'(?:^|(?<=[。！？；〕\n]))\s*'
+        + r'(?:(?:中華)?(?:' + ap + r')?(?P<pubr>' + ar + r'))'
+        + r'(?P<puy>' + y + r')年(?P<pugz>' + sb + r')'
+        + r'(?=[一-十]{1,2}[月日]|[春夏秋冬]|\d)'
+    )
+    entry_pure_age = (
+        r'(?:(?:^|(?<=\n))\s*'
+        + r'(?P<puage>' + an + as_required + r')(?:[，,、。]|(?=[春夏秋冬]))?'  # 行首：可選吞標點
+        + r'|(?<=[。！？；〕])'
+        + r'(?P<puage2>' + an + as_required + r')(?:[，,、。]|(?=[春夏秋冬])))'  # 句中：需標點/季節
+    )
+
     # 依格式族選擇 pattern 子集（fmt=None 時全部套用）
     # 出生 pattern（birth/birth_direct/birth_no_person）一律啟用：
     #   1) 兩種格式（先生生 / 公生於 / 生於）的出生條目都會種下年號，若排除則後續條目
@@ -2019,6 +2078,9 @@ def _build_full_pattern(fmt=None):
         alts.append(entry_sb_no_person)
     if fmt is not None and fmt.get('gz_age'):
         alts.append(entry_gz_age)   # 干支+直接年齡（李恕谷等）；僅 gz_age 格式啟用
+    if fmt is not None and fmt.get('pure_age'):
+        alts.append(entry_pure_age_birth)  # 純年齡出生條目（年號N年干支原子化）
+        alts.append(entry_pure_age)        # 純年齡：行首/句末「N歲」
     if fmt is None:
         alts.append(entry_bare)
         alts.append(entry_bare_gz)   # 保險：全部 pattern 時也含行首裸干支
@@ -2136,6 +2198,14 @@ def process_nianpu(text, slots=None):
         gz_age_ref = _find_gz_age_birth_ref(text)
         if gz_age_ref:
             gz_age_dyn = _reign_dynasty(gz_age_ref[2])
+    # 純年齡格式（曹月川先生年譜等）：出生條目為唯一紀年錨點，
+    # 依出生年＋年齡 推算各條目年號年序＋公元年（_expand_pure_age_heading）
+    pure_age_ref = None
+    pure_age_dyn = None
+    if fmt.get('pure_age'):
+        pure_age_ref = _find_gz_age_birth_ref(text)
+        if pure_age_ref:
+            pure_age_dyn = _reign_dynasty(pure_age_ref[2])
 
     def insert(m):
         raw = m.group(0).strip()
@@ -2160,6 +2230,12 @@ def process_nianpu(text, slots=None):
             # 干支+直接年齡（gz_age）出生條目：順治十六年閏三月… → 順治十六年己亥閏三月…（補回干支）
             if fmt.get('gz_age') and gz_age_ref:
                 heading = _inject_birth_ganzhi(heading, gz_age_ref[0])
+
+        # 純年齡格式：依出生年＋年齡 推年號年序＋干支（出生標題原樣、標題自含年號）
+        if fmt.get('pure_age') and pure_age_ref:
+            exp = _expand_pure_age_heading(heading, pure_age_ref, pure_age_dyn)
+            if exp is not None:
+                heading = exp
 
         # 如果清理後標題過長（>40字，出生條目 >30字），跳過
         if (not is_birth and len(heading) > 40) or (is_birth and len(heading) > 30):
@@ -2199,7 +2275,7 @@ def process_nianpu(text, slots=None):
     result = _split_embedded_years(result, person_extra=person_extra)
     # 干支+直接年齡（gz_age）年譜為逐年短敘散文，季節字（春夏秋冬）多為正文用語
     # （如討論《春秋》「春正月無氷」），按月/季節分段會誤切，跳過
-    if not fmt.get('gz_age'):
+    if not fmt.get('gz_age') and not fmt.get('pure_age'):
         result = split_by_month(result)
     # 在標題上標註公元年：嘉慶十一年丙寅 → 嘉慶十一年丙寅（1806年）
     result = annotate_ad_years(result)

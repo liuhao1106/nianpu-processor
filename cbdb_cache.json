@@ -232,5 +232,14 @@
   "death": 1769,
   "years_lived": "77",
   "dynasty": "清"
+ },
+ "曹端": {
+  "id": "481668",
+  "name": "曹端",
+  "eng": "Cao Duan",
+  "birth": null,
+  "death": null,
+  "years_lived": "",
+  "dynasty": "明"
  }
 }
