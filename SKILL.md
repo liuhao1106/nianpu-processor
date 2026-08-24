@@ -34,7 +34,7 @@ python nianpu_archive.py <定稿.md> [--book <書名>] [--date YYYY-MM-DD] [--no
 python nianpu_processor.py --record "錯" "對" [來源]   # 手動修正回饋（干支形近字累積 OCR 候選，不自動晉升）
 python nianpu_processor.py --status                    # 學習狀態；--prune 清理無效記錄
 python nianpu_processor.py <輸入> <輸出> --slots <槽位.json>   # 語義槽位配置（新格式不改正則）
-python tools/regression.py --run                       # 改動腳本後必跑（回歸測試，詳見 docs/回歸測試.md）
+python tools/regression.py --run                       # 改動腳本後必跑（回歸測試＋尾段學習帳本報告：pending 摘要＋verified 複驗，詳見 docs/回歸測試.md）
 python tools/regression.py --verify-learnings          # 學習質檢閘門：pending 條目逐條臨時套用→回歸→PASS 轉正
 python nianpu_processor.py --revert                    # 回滾 learnings.json 最近一次寫入（.bak 單槽備份）
 ```
@@ -57,7 +57,7 @@ python nianpu_processor.py --revert                    # 回滾 learnings.json �
 1. **README.md 是唯一全文**——每次改進（腳本、learnings、成功案例）同步更新 README（功能、支援格式、更新日誌、已處理清單等）。**SKILL.md 只是入口**，不含易變事實，兩者不存在同步問題。
 2. **每次處理新年譜成功後，記錄到 README「已成功處理的年譜」表**（含格式與備註）。
 3. **手動修正要回饋到學習系統**——`--record` 錄入錯→對映射，經驗寫入 `learnings.json`（已納入版本管理，隨案例里程碑一併 commit）。
-4. **改動腳本後回歸測試**——跑 `python tools/regression.py --run`，全部 PASS 才收工；有 FAIL 先修。功能確有改進時先 `--run` 確認 PASS，再 `--run --update` 刷新基線。注意：回歸標的為「基礎規則集」（不走 `apply_learnings()`），learnings 演化不在回歸範圍。
+4. **改動腳本後回歸測試**——跑 `python tools/regression.py --run`，全部 PASS 才收工；有 FAIL 先修。功能確有改進時先 `--run` 確認 PASS，再 `--run --update` 刷新基線。注意：回歸標的為「基礎規則集」（不走 `apply_learnings()`），learnings 演化不在回歸範圍；但 `--run` 尾段的**學習帳本報告**要看——若 pending 條目開始堆積（須 `--verify-learnings` 消化）或 verified 複驗 WARN「套用後輸出有變化」，都表示學習狀態異常，先處理再收工。
 5. **學習條目須過質檢閘門才生效**——self_learn 發現的年號/前綴一律 `pending`，不會被自動應用；須跑 `python tools/regression.py --verify-learnings`（逐條臨時套用→回歸→PASS 轉正）。轉正錯了可 `python nianpu_processor.py --revert` 回滾最近一次 learnings 寫入。
 6. **首年（出生條目）正文必須保留「{名}生於/生于/生/誕」等動詞**——標題只是借用日期顯示，正文出生句須原樣保留；常見錯誤形態與檢查法見 README「常見問題」。
 

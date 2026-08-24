@@ -60,7 +60,8 @@ from .learnings import (
     self_learn, _record_correction, _accumulate_ocr_candidate,
     record_manual_correction, prune_invalidated_learnings,
     apply_learnings, print_learnings_summary,
-    pending_learnings, mark_learnings_verified, revert_learnings,
+    pending_learnings, verified_learnings,
+    mark_learnings_verified, revert_learnings,
 )
 from .verify import verify_output, _format_anchor_report
 from .process import annotate_ad_years, process_nianpu, slots_to_fmt
@@ -107,7 +108,8 @@ __all__ = [
     'self_learn', '_record_correction', '_accumulate_ocr_candidate',
     'record_manual_correction', 'prune_invalidated_learnings',
     'apply_learnings', 'print_learnings_summary',
-    'pending_learnings', 'mark_learnings_verified', 'revert_learnings',
+    'pending_learnings', 'verified_learnings',
+    'mark_learnings_verified', 'revert_learnings',
     # verify
     'verify_output', '_format_anchor_report',
     # process

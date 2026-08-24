@@ -547,6 +547,26 @@ def pending_learnings():
     return {'reigns': reigns, 'prefixes': prefixes}
 
 
+def verified_learnings():
+    """已驗證（status='verified'）且未被無效化的年號/前綴（供 --run 帳本報告）。
+
+    回傳 {'reigns': [年號...], 'prefixes': {前綴: reign}}。
+    與 apply_learnings 的實際套用集略有出入——套用另受「已在基座 REIGNS/
+    EMPEROR_PREFIXES」「置信度/次數閾值」約束；本函式只反映「已轉正」的全量。
+    """
+    learnings = _load_learnings()
+    reigns = sorted(
+        r for r, info in learnings.get('discovered_reigns', {}).items()
+        if not info.get('invalidated', False)
+        and info.get('status') == 'verified')
+    prefixes = {
+        p: info['reign']
+        for p, info in learnings.get('discovered_prefixes', {}).items()
+        if not info.get('invalidated', False)
+        and info.get('status') == 'verified'}
+    return {'reigns': reigns, 'prefixes': prefixes}
+
+
 def mark_learnings_verified(reign_names, prefix_names):
     """質檢閘門回報：把通過回歸驗證的條目轉正（status='verified'）並保存。
 

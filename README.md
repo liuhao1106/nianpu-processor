@@ -153,7 +153,7 @@ python nianpu_archive.py 袁观澜先生年谱_合并_定稿.md --book 袁观澜
 
 # —— 回歸測試（改動腳本後必跑；詳見 docs/回歸測試.md）——
 python tools/regression.py --selfcheck      # 從黃金輸出實測基線
-python tools/regression.py --run            # 重跑 testdata 九案例 vs 基線 → PASS/FAIL 表＋回歸行
+python tools/regression.py --run            # 重跑 testdata 九案例 vs 基線 → PASS/FAIL 表＋回歸行＋學習帳本報告（pending 摘要＋verified 複驗）
 python tools/regression.py --run --full     # 另掃 E: 識典數據 全庫
 python tools/regression.py --run --update   # 人工審核後以本次結果刷新基線
 python tools/regression.py --smoke          # 快速冒煙
@@ -477,6 +477,8 @@ self_learn 發現（pending）→ python tools/regression.py --verify-learnings
 
 每次 `learnings.json` 覆寫前自動備份 `.bak`（驗證轉正／修正錄入／統計更新皆可回滾）：`python nianpu_processor.py --revert` 回滾最近一次寫入。
 
+`python tools/regression.py --run` 尾段附帶**學習帳本報告**（只讀，不改檔）：①pending 未驗證條目數與名單；②已驗證（verified）學習複驗——把生效集臨時套用重跑九案例 vs 未套用基線，輸出須無變化；變化即「已驗證學習 × 現行代碼」漂移（代碼改動或學習穿透），會在 --run 綠燈旁直接 WARN 並列受影響案例。這補上「verified 只在轉正那一刻被驗證過、之後無任何回歸覆蓋」的長期缺口。
+
 手動修正可通過 `--record "錯" "對" [來源]` 回饋到學習系統：干支形近字（單字替換，如 順治乙亥→己亥）累積為 OCR 候選規則（帶上下文＋來源），`--status` 列出出現 ≥2 次的候選供人工複核後手動升級 `_OCR_FIXES`（**不自動晉升**，年序推論錯誤屬校勘不沉澱為字形規則）；年號/前綴/字形類修正自動標記相關學習為無效。`--prune` 命令批量清理已無效的學習記錄。
 
 ### L2 三錨點一致性檢查
@@ -597,6 +599,7 @@ A: 這是把出生日期併入標題（`### 嘉慶十一年丙寅十月一日戌
 
 | 版本 | 要點 |
 |------|------|
+| v3.39 | **--run 附帶學習帳本報告（信任鏈收口）**：化解「每日＼`--run` 綠燈無法告知學習帳本狀態、verified 只在轉正那一刻被驗證過」的操作缺口。`tools/regression.py --run` 尾段附帶 `learnings.py` 新增 `verified_learnings()`（已轉正全量，鏡像 pending_learnings）派生的帳本報告：①**pending 摘要**——未驗證條目數與名單，提示 `--verify-learnings` 轉正；②**verified 複驗**——把 apply_learnings 的生效集臨時套用（就地變異，與閘門同款）重跑 manifest 全部案例 vs 本次基線，full 案例比對歸一化全文、其餘比對指標；輸出無變化即淨 PASS，變化逐一列受影響案例（並會火力全開抓到「正文竄改但標題數不變」等級的穿透）。只讀不改 learnings.json；`evaluate_case` 返回值新增 `result_text`（full 案例基線全文快照）支撐複驗。負向實測：注入假 OCR 規則「歲→歲X」被複驗抓出 6 案例失守（含王欣夫 titles 74→24＋全文）。回歸 9/9 PASS |
 | v3.38 | **學習質檢閘門（自我進化可信化）**：化解「自我進化發現的假陽性年號/前綴會被直接套用、污染後續處理」的信任缺口。①條目狀態機：`learnings.json` 年號/前綴條目一律帶 `status`（舊數據遷移為 `pending`）；`apply_learnings` **只應用 `verified` 條目**（年號另需 ≥2 次出現且置信度 ≥0.4），pending 不生效，apply 報告列「待驗證未應用」提示。②閘門命令 `python tools/regression.py --verify-learnings`：逐條 pending「臨時套用（原地變異）→ 跑全部回歸案例 vs 基線 → PASS 轉正 / FAIL 維持 pending 並列首個失敗案例與原因」；無操作條目（已被基座涵蓋）直接轉正。③可回滾：每次 `learnings.json` 覆寫前自動備份 `.bak`，`python nianpu_processor.py --revert` 回滾最近一次寫入（轉正／--record 錄入／統計更新皆可回滾）。負向實測：注入假年號「二十」被閘門攔截（74 處內容差異、FAIL 且不轉正）；既有 4 條真實 pending 條目（年號 咸丰/康熈、前綴 祖章皇帝/世宗皇帝）驗證轉正。回歸 9/9 PASS |
 | v3.37 | **單檔拆包（nianpu_core，行為零變化的機械拆分）**：化解「3338 行單檔、93% 為管線邏輯」的可維護性問題——不動任何函數體，按功能把 `nianpu_processor.py` 切分為 `nianpu_core/` 包 13 模塊（constants/base/expand/preprocess/anchors/fixes/modern/patterns/segment/learnings/verify/process/cli，依賴單向無循環），原檔保留為薄門面（`from nianpu_core import *`），命令／參數／`import nianpu_processor`／`__file__` 路徑解析全部不變；外部腳本（regression/biaodian/arbitrate/coverage/bare_review）零改動直接兼容。拆分自檢：行覆蓋率 100%（8 處漏行修正）＋刪除唯一死代碼（被後定義覆蓋的第一版 `_int_to_chinese_year`）。等價性驗證：A/B 對比舊單檔 vs 新包（9 案例輸出全文＋格式分類＋標題數＋出生年＋可疑數逐項一致）；回歸 9/9 PASS（6 full 全文鎖定殘差零變化）。README 新增「程式碼結構」章、安裝說明改為整目錄 |
 | v3.36 | **行内嵌入式年份補缺（重刻鄭端簡 1546 缺口收口＝72 標題與黃金一致）**：前版本已知缺口「嘉靖二十五年丙午（1546年）缺標題」——主叙事該年行首裸干支被 OCR 併進前一句（内午→丙午，如「…撫卷長嘆也已。丙午三月，再疏乞致仕…」）。新增 `_fill_missing_bare_year_title`（bare_gz 專用）：在某標題塊正文的「句界（行首/。！？；」』））」後掃「干支X月」，僅當該干支恰解碼為塊年份的**次年**、且次年確無標題時，才在該處拆出次年新標題（`_reign_label_of_ad` 由 AD 推「年號N年」標籤）；截點前行尾內容（如「讀陶集四八目…撫卷長嘆也已。」）保留在當年塊，只去干支、留下「三月」作次年正文開頭。安全閾杜絕誤切祭文/記日中的干支X月（干支非次年或次年已有標題）。結果：重刻鄭端簡 71→72 標題（x=黃金），1545（讀陶集）／1546／1547 三塊逐字鎖定；回歸 9/9 PASS |

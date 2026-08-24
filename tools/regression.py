@@ -28,7 +28,7 @@
 
 用法：
   python tools/regression.py --selfcheck       # 建立基線（行為快照＋黃金指標）
-  python tools/regression.py --run             # 重跑管線 vs 基線，出 PASS/FAIL 表＋回歸行
+  python tools/regression.py --run             # 重跑管線 vs 基線，出 PASS/FAIL 表＋回歸行＋尾段學習帳本報告
   python tools/regression.py --run --full      # 另掃描 E: 識典數據 全部案例（不限 testdata）
   python tools/regression.py --run --update    # 重跑後以本次結果刷新基線（人工審核後再用）
   python tools/regression.py --smoke           # 只驗證不崩潰（快速冒煙）
@@ -38,6 +38,8 @@
 約定：
   * 回歸對象是「基礎規則集」——直接呼叫 process_nianpu，不走 main() 的
     apply_learnings()，因此不受 learnings.json 經驗累積影響，結果可跨機複現。
+  * --run 尾段附帶「學習帳本報告」（只讀）：pending 摘要 + verified 學習複驗
+    （臨時套用生效集 vs 本次基線，輸出須無變化）——補 verified 的長期覆蓋缺口。
   * 標點（nianpu_biaodian）與仲裁（nianpu_arbitrate）屬 LLM-in-loop 步驟，
     不在此回歸範圍（其 verify 已做字符保全校驗）。
   * 指標式比對（非全文 diff）不抓「改了輸出但指標不變」的 bug，是刻意取捨：
@@ -312,8 +314,9 @@ def evaluate_case(case, base_entry):
     src, gld = case_paths(case)
     if not Path(src).exists():
         return {'ok': None, 'diffs': ['源檔不存在'], 'm': None,
-                'residual': None, 'ran_full': False}
+                'residual': None, 'ran_full': False, 'result_text': None}
     text = read_text(src)
+    result_text = None
     try:
         if mode == 'full':
             m, result_text = pipeline_metrics(text, with_text=True)
@@ -321,7 +324,7 @@ def evaluate_case(case, base_entry):
             m = pipeline_metrics(text)
     except Exception as e:
         return {'ok': None, 'diffs': [f'拋異常：{e}'], 'm': None,
-                'residual': None, 'ran_full': False}
+                'residual': None, 'ran_full': False, 'result_text': None}
 
     base_m = base_entry.get('metrics') if base_entry else None
     ok, diffs = compare(m, base_m, mode)
@@ -347,7 +350,7 @@ def evaluate_case(case, base_entry):
             ok = False
 
     return {'ok': ok, 'diffs': diffs, 'm': m, 'residual': residual,
-            'ran_full': ran_full}
+            'ran_full': ran_full, 'result_text': result_text}
 
 
 def cmd_run(manifest, baseline, full=False, update=False):
@@ -363,12 +366,15 @@ def cmd_run(manifest, baseline, full=False, update=False):
     run_metrics = {}
     base_cases = (baseline or {}).get('cases', {}) if baseline else {}
     run_content = {}   # full 模式：case -> 本次內容殘差（供更新基線）
+    base_texts = {}    # full 模式：case -> 本次基線全文（供 learning 帳本複驗）
 
     for case in cases:
         name = case['name']
         mode = case.get('mode', 'metric')
         base_entry = base_cases.get(name)
         r = evaluate_case(case, base_entry)
+        if r.get('result_text') is not None:
+            base_texts[name] = r['result_text']
 
         if r['ok'] is None:
             failed.append((name, r['diffs']))
@@ -440,7 +446,107 @@ def cmd_run(manifest, baseline, full=False, update=False):
         BASELINE_PATH.write_text(
             json.dumps({'cases': new_cases}, ensure_ascii=False, indent=2), encoding='utf-8')
         print(f"\n已以本次結果刷新基線 → {BASELINE_PATH}（{len(run_metrics)} 案例）")
+    report_learnings_ledger(manifest['cases'], run_metrics, base_texts)
     return 0 if not failed else 1
+
+
+# ---------------- 學習帳本報告（--run 附帶） ----------------
+
+def _applied_entry_count(applied):
+    """從 apply_learnings 回傳的「年號 +N：…／前綴 +N：…」行統計實際添加條目數。"""
+    n = 0
+    for line in applied:
+        m = re.match(r'(年號|前綴) \+(\d+)：', line)
+        if m:
+            n += int(m.group(2))
+    return n
+
+
+def _metric_changes(base_m, applied_m):
+    changed = []
+    for key in ('format', 'titles', 'birth_year', 'suspicious', 'coverage'):
+        if base_m.get(key) != applied_m.get(key):
+            changed.append(f"{key} {base_m.get(key)}→{applied_m.get(key)}")
+    return changed
+
+
+def _verified_delta(manifest_cases, run_metrics, base_texts):
+    """套用已驗證學習後重跑 manifest 案例，與 --run 本次基線（未套用）比對輸出。
+
+    full 案例比對歸一化全文、其餘比對指標——二者皆應「無變化」；
+    任一改變都代表「已驗證學習 × 現行代碼」發生漂移（代碼改動或學習穿透）。
+    """
+    deltas = []
+    for case in manifest_cases:
+        name = case['name']
+        base_m = run_metrics.get(name)
+        src, _ = case_paths(case)
+        if not Path(src).exists() or base_m is None:
+            continue
+        if case.get('mode') == 'full':
+            m, a_text = pipeline_metrics(read_text(src), with_text=True)
+            changed = _metric_changes(base_m, m)
+            b_text = base_texts.get(name)
+            if b_text is not None and normalize_content(a_text) != normalize_content(b_text):
+                changed.append('全文內容')
+        else:
+            m = pipeline_metrics(read_text(src))
+            changed = _metric_changes(base_m, m)
+        if changed:
+            deltas.append((name, changed))
+    return deltas
+
+
+def report_learnings_ledger(manifest_cases, run_metrics, base_texts):
+    """--run 附帶的學習帳本報告（掃一眼即可，非獨立流程、只讀不改檔）：
+      ① 待驗證（pending）條目：尚未生效，須 --verify-learnings 轉正；
+      ② 已驗證（verified）學習複驗：把生效集臨時套用重跑 manifest 案例，
+         輸出須與本次基線（未套用）一致——補上「verified 只在轉正那一刻
+         被驗證過、之後無任何回歸覆蓋」的長期缺口。
+    """
+    print('─' * 78)
+    print('學習帳本（--run 附帶報告；只讀 learnings.json，不寫入）')
+    print('─' * 78)
+
+    pend = NP.pending_learnings()
+    n_pend = len(pend['reigns']) + len(pend['prefixes'])
+    if n_pend:
+        names = sorted(pend['reigns']) + sorted(
+            f"{p}→{pend['prefixes'][p]['reign']}" for p in pend['prefixes'])
+        print(f"  ⏳ 待驗證（pending）{n_pend} 條未生效：{'、'.join(names)}")
+        print(f"     （轉正：python tools/regression.py --verify-learnings）")
+    else:
+        print('  ⏳ 待驗證（pending）：0 條')
+
+    v = NP.verified_learnings()
+    v_parts = sorted(v['reigns']) + sorted(
+        f"{p}→{r}" for p, r in v['prefixes'].items())
+    if not v_parts:
+        print('  ✓ 已驗證（verified）：0 條')
+        return
+
+    reigns_snap = list(NP.REIGNS)
+    prefixes_snap = list(NP.EMPEROR_PREFIXES)
+    applied = []
+    deltas = []
+    try:
+        changes = NP.apply_learnings()
+        applied = [c for c in changes if c.startswith(('年號 +', '前綴 +'))]
+        if applied:
+            deltas = _verified_delta(manifest_cases, run_metrics, base_texts)
+    finally:
+        NP.REIGNS[:] = reigns_snap
+        NP.EMPEROR_PREFIXES[:] = prefixes_snap
+
+    desc = f"（本次生效 {_applied_entry_count(applied)} 條）" if applied else "（本次無操作：已內建基座／未達閾值）"
+    print(f"  ✓ 已驗證（verified）{len(v_parts)} 條：{'、'.join(v_parts)} {desc}")
+    if deltas:
+        print('  ✗ 複驗失守：套用已驗證學習後輸出有變化（代碼改動或學習穿透）：')
+        for name, changed in deltas:
+            print(f"     - {name}：{'；'.join(changed)}")
+        print('     （先查原因，勿以 --update 刷新基線掩蓋）')
+    else:
+        print('  ✓ 複驗：套用已驗證學習後，各案例輸出與本次基線無變化')
 
 
 # ---------------- 質檢閘門：--verify-learnings ----------------
