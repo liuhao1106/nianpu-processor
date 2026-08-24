@@ -32,6 +32,8 @@
   python tools/regression.py --run --full      # 另掃描 E: 識典數據 全部案例（不限 testdata）
   python tools/regression.py --run --update    # 重跑後以本次結果刷新基線（人工審核後再用）
   python tools/regression.py --smoke           # 只驗證不崩潰（快速冒煙）
+  python tools/regression.py --verify-learnings  # 學習質檢閘門：pending 條目逐條臨時套用→
+                                                 # 跑回歸→PASS 轉 verified（FAIL 維持 pending）
 
 約定：
   * 回歸對象是「基礎規則集」——直接呼叫 process_nianpu，不走 main() 的
@@ -298,6 +300,56 @@ def scan_full_library():
 
 # ---------------- 執行回歸 ----------------
 
+def evaluate_case(case, base_entry):
+    """單案例 vs 基線（--run 與 --verify-learnings 共用的比對核心）。
+
+    回傳 dict：{ok, diffs, m, residual, ran_full}。
+    ok=None 表示源檔缺失/管線拋異常（diffs 帶原因，m=None）。
+    ran_full=True 表示該案例為 full 模式且指標級已過（殘差已計算，
+    可供 --update 存入基線——與舊行為一致：無黃金檔時 residual 為 None）。
+    """
+    mode = case.get('mode', 'metric')
+    src, gld = case_paths(case)
+    if not Path(src).exists():
+        return {'ok': None, 'diffs': ['源檔不存在'], 'm': None,
+                'residual': None, 'ran_full': False}
+    text = read_text(src)
+    try:
+        if mode == 'full':
+            m, result_text = pipeline_metrics(text, with_text=True)
+        else:
+            m = pipeline_metrics(text)
+    except Exception as e:
+        return {'ok': None, 'diffs': [f'拋異常：{e}'], 'm': None,
+                'residual': None, 'ran_full': False}
+
+    base_m = base_entry.get('metrics') if base_entry else None
+    ok, diffs = compare(m, base_m, mode)
+
+    # full 模式：全文內容鎖定——比對「本次內容殘差」與基線殘差。
+    # 零假陽性：與基線殘差一致則 PASS（既有人工修正殘差不誤報）；
+    # 出現基線未見的新殘差 → FAIL，抓到「輸出變了但指標不變」的 bug。
+    residual = None
+    ran_full = False
+    if mode == 'full' and ok:
+        ran_full = True
+        if Path(gld).exists():
+            residual = content_residual(result_text, read_text(gld))
+        base_residual = base_entry.get('content_residual') if base_entry else None
+        if base_residual is None:
+            diffs.append('full 模式缺基線內容殘差（先 --update/--selfcheck 重建基線）')
+            ok = False
+        elif residual != base_residual:
+            new = [r for r in (residual or []) if r not in (base_residual or [])]
+            if not new:
+                new = [r for r in (residual or [])]  # 保護性列出
+            diffs.append(f'全文內容鎖定失守（新殘差：{residual_brief(new)}）')
+            ok = False
+
+    return {'ok': ok, 'diffs': diffs, 'm': m, 'residual': residual,
+            'ran_full': ran_full}
+
+
 def cmd_run(manifest, baseline, full=False, update=False):
     cases = list(manifest['cases'])
     if full:
@@ -315,44 +367,20 @@ def cmd_run(manifest, baseline, full=False, update=False):
     for case in cases:
         name = case['name']
         mode = case.get('mode', 'metric')
-        src, gld = case_paths(case)
-        if not Path(src).exists():
-            failed.append((name, ['源檔不存在']))
-            continue
-        text = read_text(src)
-        try:
-            if mode == 'full':
-                m, result_text = pipeline_metrics(text, with_text=True)
-            else:
-                m = pipeline_metrics(text)
-        except Exception as e:
-            failed.append((name, [f'拋異常：{e}']))
-            continue
-        run_metrics[name] = m
-
         base_entry = base_cases.get(name)
+        r = evaluate_case(case, base_entry)
+
+        if r['ok'] is None:
+            failed.append((name, r['diffs']))
+            continue
+        m = r['m']
+        run_metrics[name] = m
+        ok, diffs = r['ok'], r['diffs']
+
+        if r['ran_full']:
+            run_content[name] = r['residual']
+
         base_m = base_entry.get('metrics') if base_entry else None
-        ok, diffs = compare(m, base_m, mode)
-
-        # full 模式：全文內容鎖定——比對「本次內容殘差」與基線殘差。
-        # 零假陽性：與基線殘差一致則 PASS（既有人工修正殘差不誤報）；
-        # 出現基線未見的新殘差 → FAIL，抓到「輸出變了但指標不變」的 bug。
-        if mode == 'full' and ok:
-            residual = None
-            if Path(gld).exists():
-                residual = content_residual(result_text, read_text(gld))
-            run_content[name] = residual
-            base_residual = base_entry.get('content_residual') if base_entry else None
-            if base_residual is None:
-                diffs.append('full 模式缺基線內容殘差（先 --update/--selfcheck 重建基線）')
-                ok = False
-            elif residual != base_residual:
-                new = [r for r in (residual or []) if r not in (base_residual or [])]
-                if not new:
-                    new = [r for r in (residual or [])]  # 保護性列出
-                diffs.append(f'全文內容鎖定失守（新殘差：{residual_brief(new)}）')
-                ok = False
-
         if base_entry and base_m and base_m.get('format') and m.get('format') \
                 and base_m['format'] != m['format']:
             warn_fmt.append(f"{name}：格式族 {base_m['format']}→{m['format']}")
@@ -415,6 +443,105 @@ def cmd_run(manifest, baseline, full=False, update=False):
     return 0 if not failed else 1
 
 
+# ---------------- 質檢閘門：--verify-learnings ----------------
+
+def cmd_verify_learnings(manifest, baseline):
+    """學習質檢閘門（P0）：pending 學習條目逐條「臨時套用→跑回歸→PASS 轉正」。
+
+    只收「回歸已驗證」的條目：self_learn 發現的新年號/前綴一律 status='pending'，
+    apply_learnings 只應用 verified 條目。本命令對每條 pending：
+      ①無操作條目（年號已在 REIGNS／前綴已在 EMPEROR_PREFIXES）直接轉正；
+      ②活條目臨時套用（與 apply_learnings 同款原地變異）→ 跑全部回歸案例
+        vs 基線 → PASS 轉正（status='verified'，寫檔前自動備份 .bak）；
+        FAIL 維持 pending（不會被應用），並列出首個失敗案例與原因。
+    回滾：python nianpu_processor.py --revert（回滾最近一次寫入）。
+    """
+    print('─' * 78)
+    print('學習質檢閘門（--verify-learnings）：pending → 臨時套用 → 回歸驗證')
+    print('─' * 78)
+
+    base_cases = (baseline or {}).get('cases', {}) if baseline else {}
+    if not base_cases:
+        print('▸ 缺基線——先跑 python tools/regression.py --selfcheck 建立基線')
+        return 1
+
+    pend = NP.pending_learnings()
+    reigns = dict(pend['reigns'])
+    prefixes = dict(pend['prefixes'])
+    if not reigns and not prefixes:
+        print('▸ 無待驗證（pending）條目——所有可應用學習均已驗證。')
+        return 0
+
+    n_cases = len(manifest['cases'])
+    verified_r, verified_p, rejected = [], [], []
+
+    # ①無操作條目：套用不產生任何效果（已被基座涵蓋），直接轉正
+    for r in sorted(reigns):
+        if r in NP.REIGNS:
+            verified_r.append(r)
+            print(f"  [PASS] 年號「{r}」：無操作（已在 REIGNS）")
+            del reigns[r]
+    for p in sorted(prefixes):
+        if any(p == ep for ep, _ in NP.EMPEROR_PREFIXES):
+            verified_p.append(p)
+            print(f"  [PASS] 前綴「{p}」：無操作（已在 EMPEROR_PREFIXES）")
+            del prefixes[p]
+
+    # ②活條目：逐條臨時套用 → 跑回歸（原地變異保證管線調用時可見）
+    def _gate_failures():
+        fails = []
+        for case in manifest['cases']:
+            r = evaluate_case(case, base_cases.get(case['name']))
+            if r['ok'] is not True:
+                fails.append((case['name'], r['diffs']))
+        return fails
+
+    reigns_snap = list(NP.REIGNS)
+    prefixes_snap = list(NP.EMPEROR_PREFIXES)
+    for r in sorted(reigns):
+        NP.REIGNS.append(r)
+        try:
+            fails = _gate_failures()
+        finally:
+            NP.REIGNS[:] = reigns_snap
+        if fails:
+            name, diffs = fails[0]
+            rejected.append(('年號', r, name, diffs))
+            print(f"  [FAIL] 年號「{r}」：{name}——{diffs[0] if diffs else ''}")
+        else:
+            verified_r.append(r)
+            print(f"  [PASS] 年號「{r}」：回歸 {n_cases}/{n_cases} 全過")
+    for p in sorted(prefixes):
+        info = prefixes[p]
+        NP.EMPEROR_PREFIXES.insert(0, (p, info['reign']))
+        try:
+            fails = _gate_failures()
+        finally:
+            NP.EMPEROR_PREFIXES[:] = prefixes_snap
+        if fails:
+            name, diffs = fails[0]
+            rejected.append(('前綴', p, name, diffs))
+            print(f"  [FAIL] 前綴「{p}」→ {info['reign']}：{name}——{diffs[0] if diffs else ''}")
+        else:
+            verified_p.append(p)
+            print(f"  [PASS] 前綴「{p}」→ {info['reign']}：回歸 {n_cases}/{n_cases} 全過")
+
+    # ③持久化：PASS 轉正（mark_learnings_verified 保存前自動備份 .bak）
+    if verified_r or verified_p:
+        n = NP.mark_learnings_verified(verified_r, verified_p)
+        print(f"\n▸ 已轉正 {n} 條（status='verified'，learnings.json 已更新；"
+              f"回滾：python nianpu_processor.py --revert）")
+    if rejected:
+        print(f"▸ {len(rejected)} 條未通過回歸，維持 pending（不會被應用）：")
+        for kind, name, case_name, diffs in rejected:
+            print(f"  ✗ {kind}「{name}」→ 失敗案例 {case_name}："
+                  f"{'；'.join(diffs[:2])}")
+        print("  （疑為假陽性學習；可用 --record 反饋作廢，或人工核查後刪除該條）")
+    else:
+        print('▸ 全部通過。')
+    return 0 if not rejected else 1
+
+
 def cmd_smoke(manifest):
     cases = list(manifest['cases']) + scan_full_library()
     ok = 0
@@ -439,6 +566,8 @@ def main():
         cmd_selfcheck(manifest)
     elif '--smoke' in args:
         cmd_smoke(manifest)
+    elif '--verify-learnings' in args:
+        sys.exit(cmd_verify_learnings(manifest, baseline))
     elif '--run' in args:
         sys.exit(cmd_run(manifest, baseline,
                          full='--full' in args, update='--update' in args))

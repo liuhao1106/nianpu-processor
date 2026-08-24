@@ -51,6 +51,12 @@ def _load_learnings():
                 for k, v in data.get(section, {}).items():
                     if isinstance(v, dict) and 'invalidated' not in v:
                         v['invalidated'] = False
+            # 質檢閘門（v3.38）：可應用條目（年號/前綴）須有 status 欄位；
+            # 舊數據一律遷移為 pending——未經回歸驗證的條目不再自動應用
+            for section in ['discovered_reigns', 'discovered_prefixes']:
+                for k, v in data.get(section, {}).items():
+                    if isinstance(v, dict) and 'status' not in v:
+                        v['status'] = 'pending'
             _LEARNINGS_CACHE = data
             return data
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -60,10 +66,16 @@ def _load_learnings():
 
 
 def _save_learnings(data):
-    """保存學習檔案。"""
+    """保存學習檔案（覆寫前自動備份至 learnings.json.bak，--revert 可回滾）。"""
     global _LEARNINGS_CACHE
     _LEARNINGS_CACHE = data
     p = _learnings_path()
+    if p.exists():
+        bak = p.parent / (p.name + '.bak')
+        try:
+            bak.write_text(p.read_text(encoding='utf-8'), encoding='utf-8')
+        except OSError:
+            pass  # 備份失敗不阻斷保存
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
@@ -266,7 +278,8 @@ def self_learn(original_text, result, source_file='', report_lines=None):
                 'source': source_file,
                 'count': info['count'],
                 'confidence': info['confidence'],
-                'invalidated': False
+                'invalidated': False,
+                'status': 'pending'
             }
         else:
             existing = learnings['discovered_reigns'][r]
@@ -283,7 +296,8 @@ def self_learn(original_text, result, source_file='', report_lines=None):
             learnings['discovered_prefixes'][prefix] = {
                 'source': source_file,
                 'reign': reign,
-                'invalidated': False
+                'invalidated': False,
+                'status': 'pending'
             }
 
     # 3. 發現新字形
@@ -466,39 +480,116 @@ _DEFAULT_CONFIDENCE_THRESHOLD = 0.4  # 年號自動應用的置信度閾值
 
 
 def apply_learnings():
-    """從學習檔案加載已知知識，動態擴展配置。
+    """從學習檔案加載已知知識，動態擴展配置（僅應用已通過回歸驗證的條目）。
 
-    使用置信度閾值過濾低質量年號，排除已無效的學習。
-    返回學習摘要（新增了什麼）。
+    質檢閘門（P0，v3.38）：只有 status='verified' 的年號/前綴才會被套用；
+    pending 條目須先跑 python tools/regression.py --verify-learnings
+    （逐條臨時套用→跑回歸→PASS 轉正）。返回變更清單（含 pending 提示行，
+    供 CLI 在 apply 當下顯示 diff）。
     """
     learnings = _load_learnings()
     changes = []
+    pending_hint = 0
 
-    # 動態擴展 REIGNS（僅置信度 >= 閾值的，且未被無效化的）
+    # 動態擴展 REIGNS（已驗證＋置信度/次數閾值＋未無效化）
     new_ri = []
     for r, info in sorted(learnings['discovered_reigns'].items()):
-        if r not in REIGNS:
-            conf = info.get('confidence', 0)
-            count = info.get('count', 0)
-            invalidated = info.get('invalidated', False)
-            if not invalidated and count >= 2 and conf >= _DEFAULT_CONFIDENCE_THRESHOLD:
-                new_ri.append(r)
+        if r in REIGNS or info.get('invalidated', False):
+            continue
+        meets = (info.get('count', 0) >= 2
+                 and info.get('confidence', 0) >= _DEFAULT_CONFIDENCE_THRESHOLD)
+        if info.get('status', 'pending') != 'verified':
+            if meets:
+                pending_hint += 1
+            continue
+        if meets:
+            new_ri.append(r)
     if new_ri:
         REIGNS.extend(new_ri)
-        changes.append(f"年號 +{len(new_ri)}：{'、'.join(new_ri)}")
+        changes.append(f"年號 +{len(new_ri)}：{'、'.join(new_ri)}（已驗證）")
 
-    # 動態擴展 EMPEROR_PREFIXES（排除已無效的）
+    # 動態擴展 EMPEROR_PREFIXES（已驗證＋未無效化）
     existing_prefixes = {p for p, _ in EMPEROR_PREFIXES}
     new_ep = []
     for p, info in learnings['discovered_prefixes'].items():
-        if p not in existing_prefixes and not info.get('invalidated', False):
-            new_ep.append((p, info['reign']))
+        if p in existing_prefixes or info.get('invalidated', False):
+            continue
+        if info.get('status', 'pending') != 'verified':
+            pending_hint += 1
+            continue
+        new_ep.append((p, info['reign']))
     if new_ep:
         for prefix, reign in new_ep:
             EMPEROR_PREFIXES.insert(0, (prefix, reign))
-        changes.append(f"前綴 +{len(new_ep)}：{'、'.join(p for p, _ in new_ep)}")
+        changes.append(f"前綴 +{len(new_ep)}：{'、'.join(p for p, _ in new_ep)}（已驗證）")
+
+    if pending_hint:
+        changes.append(
+            f"⏳ {pending_hint} 條待驗證學習未應用"
+            f"（驗證：python tools/regression.py --verify-learnings）")
 
     return changes
+
+
+def pending_learnings():
+    """待驗證（pending）且未被無效化的可應用條目。
+
+    回傳 {'reigns': {年號: info}, 'prefixes': {前綴: info}}，
+    供質檢閘門（tools/regression.py --verify-learnings）逐條驗證。
+    """
+    learnings = _load_learnings()
+    reigns = {r: info for r, info in learnings.get('discovered_reigns', {}).items()
+              if not info.get('invalidated', False)
+              and info.get('status', 'pending') == 'pending'}
+    prefixes = {p: info for p, info in learnings.get('discovered_prefixes', {}).items()
+                if not info.get('invalidated', False)
+                and info.get('status', 'pending') == 'pending'}
+    return {'reigns': reigns, 'prefixes': prefixes}
+
+
+def mark_learnings_verified(reign_names, prefix_names):
+    """質檢閘門回報：把通過回歸驗證的條目轉正（status='verified'）並保存。
+
+    保存前自動備份（learnings.json.bak），--revert 可回滾本次轉正。
+    回傳轉正條目數。
+    """
+    import datetime
+    learnings = _load_learnings()
+    today = datetime.date.today().isoformat()
+    n = 0
+    for r in reign_names:
+        info = learnings['discovered_reigns'].get(r)
+        if info is not None:
+            info['status'] = 'verified'
+            info['verified_date'] = today
+            n += 1
+    for p in prefix_names:
+        info = learnings['discovered_prefixes'].get(p)
+        if info is not None:
+            info['status'] = 'verified'
+            info['verified_date'] = today
+            n += 1
+    if n:
+        _save_learnings(learnings)
+    return n
+
+
+def revert_learnings():
+    """回滾 learnings.json 至最近一次保存前的狀態（.bak 單槽備份）。
+
+    每次 _save_learnings 覆寫前都會備份；--revert 回滾最近一次寫入
+    （驗證轉正、修正錄入或處理統計更新皆可回滾）。回傳 (ok, message)。
+    """
+    global _LEARNINGS_CACHE
+    p = _learnings_path()
+    bak = p.parent / (p.name + '.bak')
+    if not bak.exists():
+        return False, '無備份可回滾（learnings.json.bak 不存在）'
+    if not p.exists():
+        return False, 'learnings.json 不存在（無需回滾）'
+    p.write_text(bak.read_text(encoding='utf-8'), encoding='utf-8')
+    _LEARNINGS_CACHE = None
+    return True, '已回滾 learnings.json 至最近一次保存前的狀態'
 
 
 def print_learnings_summary():
@@ -525,7 +616,8 @@ def print_learnings_summary():
         for r, info in sorted(valid_reigns.items()):
             conf = info.get('confidence', 0)
             bar = '█' * int(conf * 10) + '░' * (10 - int(conf * 10))
-            lines.append(f"  「{r}」發現 {info['count']} 次 [置信度 {conf:.0%} {bar}]")
+            status = '已驗證' if info.get('status') == 'verified' else '待驗證'
+            lines.append(f"  「{r}」發現 {info['count']} 次 [置信度 {conf:.0%} {bar}]（{status}）")
 
     if invalid_reigns:
         lines.append(f"\n▸ 已作廢 {len(invalid_reigns)} 個年號（無效）：")
@@ -539,7 +631,8 @@ def print_learnings_summary():
     if valid_prefixes:
         lines.append(f"\n▸ 已發現 {len(valid_prefixes)} 個新前綴（有效）：")
         for p, info in valid_prefixes.items():
-            lines.append(f"  「{p}」→ {info['reign']}")
+            status = '已驗證' if info.get('status') == 'verified' else '待驗證'
+            lines.append(f"  「{p}」→ {info['reign']}（{status}）")
     if invalid_prefixes:
         lines.append(f"\n▸ 已作廢 {len(invalid_prefixes)} 個前綴（無效）：")
         for p, info in invalid_prefixes.items():
@@ -583,6 +676,14 @@ def print_learnings_summary():
         total_years = sum(f['year_count'] for f in files)
         lines.append(f"\n▸ 處理統計：{total} 個年譜，{total_years} 個年份，平均覆蓋率 {avg_cov:.1f}%")
         lines.append(f"  最近處理：{files[-1]['file']}（{files[-1]['year_count']} 年，覆蓋率 {files[-1]['coverage']}%）")
+
+    n_pending = sum(1 for v in d_r.values()
+                    if not v.get('invalidated') and v.get('status', 'pending') == 'pending') \
+        + sum(1 for v in d_p.values()
+              if not v.get('invalidated') and v.get('status', 'pending') == 'pending')
+    if n_pending:
+        lines.append(f"\n▸ 質檢閘門：{n_pending} 條待驗證（未被應用）——"
+                     f"python tools/regression.py --verify-learnings")
 
     lines.append("=" * 60)
     return '\n'.join(lines)

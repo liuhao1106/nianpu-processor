@@ -4,25 +4,33 @@
       "source": "刘熙载年谱14469130.pdf_by_PaddleOCR-VL-1.6.md",
       "count": 4,
       "confidence": 0.5,
-      "invalidated": false
+      "invalidated": false,
+      "status": "verified",
+      "verified_date": "2026-08-24"
     },
     "康熈": {
       "source": "關中李二曲先生履歷紀略_完整.txt",
       "count": 4,
       "confidence": 0.5,
-      "invalidated": false
+      "invalidated": false,
+      "status": "verified",
+      "verified_date": "2026-08-24"
     }
   },
   "discovered_prefixes": {
     "祖章皇帝": {
       "source": "330000-1705-0001667.尚友堂年譜.清仇兆鰲編.抄本_完整.md",
       "reign": "順治",
-      "invalidated": false
+      "invalidated": false,
+      "status": "verified",
+      "verified_date": "2026-08-24"
     },
     "世宗皇帝": {
       "source": "陳紫峰先生年譜_完整.txt",
       "reign": "嘉靖",
-      "invalidated": false
+      "invalidated": false,
+      "status": "verified",
+      "verified_date": "2026-08-24"
     }
   },
   "age_suffix_variants": {},

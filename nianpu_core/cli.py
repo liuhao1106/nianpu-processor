@@ -16,6 +16,8 @@
   python nianpu_processor.py <輸入檔案路徑> [輸出檔案路徑]
   python nianpu_processor.py --status        # 查看學習狀態
   python nianpu_processor.py --prune          # 清理無效學習
+  python nianpu_processor.py --revert         # 回滾 learnings.json 最近一次保存
+  python tools/regression.py --verify-learnings   # 質檢閘門：pending 學習→回歸驗證
 """
 
 import re, sys, json
@@ -27,7 +29,7 @@ from .fixes import (get_person, _cbdb_extract_name, _cbdb_check,
                     _anchor_fix_check, apply_fixes)
 from .learnings import (apply_learnings, print_learnings_summary,
                         prune_invalidated_learnings, record_manual_correction,
-                        self_learn)
+                        self_learn, revert_learnings)
 from .modern import try_parse_modern_heading
 from .process import process_nianpu, slots_to_fmt
 from .verify import verify_output, _format_anchor_report
@@ -111,6 +113,13 @@ def main():
                   f"（上下文「{cand.get('context', '')}」，共 {cand.get('count', 0)} 次）")
         else:
             print("▸ 已記錄一般修正")
+        return
+
+    # --revert 回滾 learnings.json 至最近一次保存前（.bak 單槽備份；
+    # 每次 _save_learnings 覆寫前自動備份：驗證轉正／修正錄入／統計更新皆可回滾）
+    if argv[0] == '--revert':
+        ok, msg = revert_learnings()
+        print(f"▸ {msg}")
         return
 
     # --check 對既有整理檔跑三錨點一致性檢查（不需重新處理；可加 --cbdb 附核驗/修正建議）

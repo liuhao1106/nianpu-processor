@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 docs/nianpu_report_data.json
 tmp_*
+learnings.json.bak
