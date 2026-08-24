@@ -68,10 +68,11 @@ python tools/nianpu_rag_compare.py <年譜資料目錄> [年齡清單...]  # RAG
 ## 安裝
 
 ```bash
-# 下載腳本
-wget https://raw.githubusercontent.com/<你的用戶名>/nianpu-processor/main/nianpu_processor.py
+# 下載（v3.37 起核心邏輯在 nianpu_core/ 包內，需整目錄，不能只抓單檔）
+git clone https://github.com/<你的用戶名>/nianpu-processor.git
+# 或：下載 nianpu_processor.py（薄門面）＋ nianpu_core/ 整個目錄
 
-# 直接執行（需要 Python 3.6+）
+# 直接執行（需要 Python 3.6+；命令與介面不變，仍是 nianpu_processor.py）
 python nianpu_processor.py <輸入檔案> [輸出檔案]
 ```
 
@@ -303,9 +304,34 @@ python tools/regression.py --smoke          # 快速冒煙
 
 報告後會附加**自我進化報告**，顯示本次發現的新年號、字形變體及處理統計。
 
+## 程式碼結構（nianpu_core 包）
+
+v3.37 起，3338 行的單檔 `nianpu_processor.py` 機械拆分為 `nianpu_core/` 包（13 個模塊，函數體逐字保留、行為零變化，A/B 對比＋回歸 9/9 驗證）；`nianpu_processor.py` 保留為薄門面（`from nianpu_core import *`），**所有命令、參數、`import nianpu_processor` 用法完全不變**。模塊依賴單向無循環：
+
+```
+constants ← base ← expand ← preprocess ← anchors ← fixes ← modern
+                                  ← patterns ← segment/learnings ← verify ← process ← cli
+```
+
+| 模塊 | 職責 |
+|------|------|
+| `constants.py` | 資料表與常量：年號、干支、季節、字形修正、學習路徑 |
+| `base.py` | 底層轉換與模式工具：中文數字↔整數、干支↔公元、年份模式、年號提取、稱謂偵測 |
+| `expand.py` | 標題擴展：裸干支／干支+年齡／純年齡 標題 → 年號年序＋公元年 |
+| `preprocess.py` | 文本預處理：OCR 修正、年號字形歸一、跨行合併、嵌入式年份、去重補缺 |
+| `anchors.py` | 標題錨點解析、出生年共識與三錨點一致性驗證 |
+| `fixes.py` | 年號誤配自動修正（`--fix`）與 CBDB 生卒年核驗 |
+| `modern.py` | 現代學者年譜（已有年份標題）支援：解析、格式統一、完整性檢查 |
+| `patterns.py` | 格式族分類（`classify_format`）與全文匹配模式構建（`_build_full_pattern`） |
+| `segment.py` | 年份內容按月份／季節分段 |
+| `learnings.py` | 自我進化系統：新年號／前綴／字形發現、修正記錄、學習管理 |
+| `verify.py` | 輸出核對：遺漏條目、年齡連續性、年號切換、三錨點報告 |
+| `process.py` | 主管線：年份切分與標題化（`process_nianpu`）、公元年標註（`annotate_ad_years`） |
+| `cli.py` | 命令列入口（`main`：處理／`--check`／`--fix`／`--status`／`--prune` 等） |
+
 ## 自訂配置
 
-如需增加年號或調整年齡格式，修改腳本頂部的配置區：
+如需增加年號或調整年齡格式，修改 `nianpu_core/constants.py`（資料表集中於此）：
 
 ```python
 # 含宋（建隆…祥興）、元（中統…至正）、明（洪武…崇禎）、南明、清（順治…光緒）
@@ -554,6 +580,7 @@ A: 這是把出生日期併入標題（`### 嘉慶十一年丙寅十月一日戌
 
 | 版本 | 要點 |
 |------|------|
+| v3.37 | **單檔拆包（nianpu_core，行為零變化的機械拆分）**：化解「3338 行單檔、93% 為管線邏輯」的可維護性問題——不動任何函數體，按功能把 `nianpu_processor.py` 切分為 `nianpu_core/` 包 13 模塊（constants/base/expand/preprocess/anchors/fixes/modern/patterns/segment/learnings/verify/process/cli，依賴單向無循環），原檔保留為薄門面（`from nianpu_core import *`），命令／參數／`import nianpu_processor`／`__file__` 路徑解析全部不變；外部腳本（regression/biaodian/arbitrate/coverage/bare_review）零改動直接兼容。拆分自檢：行覆蓋率 100%（8 處漏行修正）＋刪除唯一死代碼（被後定義覆蓋的第一版 `_int_to_chinese_year`）。等價性驗證：A/B 對比舊單檔 vs 新包（9 案例輸出全文＋格式分類＋標題數＋出生年＋可疑數逐項一致）；回歸 9/9 PASS（6 full 全文鎖定殘差零變化）。README 新增「程式碼結構」章、安裝說明改為整目錄 |
 | v3.36 | **行内嵌入式年份補缺（重刻鄭端簡 1546 缺口收口＝72 標題與黃金一致）**：前版本已知缺口「嘉靖二十五年丙午（1546年）缺標題」——主叙事該年行首裸干支被 OCR 併進前一句（内午→丙午，如「…撫卷長嘆也已。丙午三月，再疏乞致仕…」）。新增 `_fill_missing_bare_year_title`（bare_gz 專用）：在某標題塊正文的「句界（行首/。！？；」』））」後掃「干支X月」，僅當該干支恰解碼為塊年份的**次年**、且次年確無標題時，才在該處拆出次年新標題（`_reign_label_of_ad` 由 AD 推「年號N年」標籤）；截點前行尾內容（如「讀陶集四八目…撫卷長嘆也已。」）保留在當年塊，只去干支、留下「三月」作次年正文開頭。安全閾杜絕誤切祭文/記日中的干支X月（干支非次年或次年已有標題）。結果：重刻鄭端簡 71→72 標題（x=黃金），1545（讀陶集）／1546／1547 三塊逐字鎖定；回歸 9/9 PASS |
 | v3.35 | **回歸測試升級：全文內容鎖定（`full` 模式）＝黃金語料半步交付**：化解「回歸是指標級而非全文 diff、『輸出變了但指標不變』會漏網」的取捨。`tools/regression.py` 新增 `full` 模式＝`exact` 全部指標斷言＋**全文內容鎖定**：①歸一化層（剔標點/空白/markdown 標記＋異體歸一 熈→熙、戍→戌）消除黃金輸出因 biaodian 標點與異體字造成的假陽性；②以「管線輸出 vs 黃金」的內容殘差存入基線（`content_residual`），零殘差=正文逐字鎖定；③**零假陽性**——既有人工修正殘差（陳紫峰「正德三年→十三年」年份校正、警石府君補「府君生」）免試，僅「基線未見的新殘差」報 FAIL，抓到文字指標級看不到的 bug（已負向實測：僅篡改正文一字符、標題數不變即觸發「全文內容鎖定失守」）。六案例升 `full`（文貞公/陳紫峰/警石府君/殷譜經/紫陽文公/王欣夫），其中四例零殘差全文鎖定、兩例含已入基線的人工修正殘差；方柏堂/萬清軒/重刻鄭端簡維持 metric 哨兵。詳見 [docs/回歸測試.md](docs/回歸測試.md)。回歸 9/9 PASS |
 | v3.34 | **兩處既有缺口修復（紫陽不可能年份＋鄭端簡〔〕注文雙匹配）＋述畧重複去重**：①**年號年序長度檢驗**——`_expand_bare_gz_heading` 推算年序須落在該年號實際起訖（`REIGN_END_YEARS`）內，超長（隆慶十年、慶元五十二年、紹熙三十七年）判為非年份條目而不展開；裸干支推算失敗時不再以當前年號前綴硬造標題、改保留原文。②**〔〕注文排除**——行首裸干支（bare_gz）格式譜的卷前/述畧常以「干支、〔年號N年，公N歲。〕」重複彙總全文年份，insert 對與〔〕註文重疊的匹配不成標題（限定 bare_gz，person 格式〔〕內年份如警石「〔…。道光六年丙戌旣裝潢」仍保留為合法條目）。③**述畧同年去重**（`_dedupe_repeated_year_headings`，bare_gz）：主內容行首裸干支展開後必含干支、述畧無干支，故對同一公元年同時含干支與無干支標題者，保留含干支主內容、將述畧重複降回正文；含干支多緼（嘉靖三十三/三十六年）不誤合。配合既有「bare 優先於 bare_gz」規則，結果：紫陽文公 79→75（x=黃金，升 exact）；重刻鄭端簡 145→76→71，推定出生年 1499→None（x=黃金 None）。嘉靖二十五年丙午（1546年）仍缺——主文本中行「丙午三月」無年齡後綴，安全自動拆不可行（黃金為人工插補），故鄭端簡維持 metric 哨兵。回歸 9/9 PASS |
