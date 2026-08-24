@@ -18,6 +18,10 @@
        ≠ 純自動管線能力，誠實分開），不擋 PASS
 
 三層模式：
+  full    指標全比對（標題數/出生年/可疑數/覆蓋率）＋全文內容鎖定：歸一化
+          （剔標點/空白/標記、異體歸一）後正文逐字與黃金一致。零假陽性——
+          黃金含人工修正的既有殘差存入基線，僅「新增殘差」才報 FAIL，抓到
+          「輸出變了但標題數/覆蓋率不變」的 bug。路線圖 #4（黃金語料）半步交付。
   exact   行為快照指標全比對（標題數/出生年/可疑數/覆蓋率）＋標題數須與黃金輸出一致
   metric  行為快照容差比對（標題數不降、覆蓋率不低於基線-容差、不崩潰）
   smoke   只驗證跑通不炸
@@ -38,6 +42,7 @@
     大量黃金輸出含人工修正，全文 diff 必然假陽性。
 """
 
+import difflib
 import json
 import os
 import re
@@ -93,8 +98,8 @@ def case_paths(case):
     return src, gld
 
 
-def pipeline_metrics(text):
-    """對一份文本跑完整管線，回傳指標 dict。"""
+def pipeline_metrics(text, with_text=False):
+    """對一份文本跑完整管線，回傳指標 dict（with_text=True 另回傳處理結果）。"""
     result, modern_report = NP.process_nianpu(text)
     suspects, seq_bad, birth_year, total = NP.verify_anchors(result)
     m = {
@@ -117,6 +122,8 @@ def pipeline_metrics(text):
                 m['missed'] = int(mis.group(1))
         except Exception:
             pass
+    if with_text:
+        return m, result
     return m
 
 
@@ -134,6 +141,53 @@ def format_label(text):
     return NP.classify_format(text).get('label', '')
 
 
+# ---------------- 全文內容鎖定（full 模式） ----------------
+
+# 歸一化層：剔除全文比對中的「良性雜訊」——標點、空白、markdown 標記，
+# 並把異體字（OCR 寫法的熈/戍等）歸一到規範形。目的：消除黃金輸出因
+# biaodian 標點與異體字造成的假陽性，讓「正文內容」真正可比。
+_FULL_PUNCT = re.compile(
+    r'[\s。，、；：？！「」『』（）()〔〕【】<>《》〈〉—…·,.;:!?"\'`【】]+')
+_FULL_MARK = re.compile(r'[*#]+')
+_FULL_VAR = {'熈': '熙', '戍': '戌'}   # 異體 → 規範（兩側同歸一，故可對稱比對）
+
+
+def normalize_content(t):
+    for a, b in _FULL_VAR.items():
+        t = t.replace(a, b)
+    t = _FULL_MARK.sub('', t)
+    return _FULL_PUNCT.sub('', t)
+
+
+def content_residual(result_text, golden_text):
+    """歸一化後「管線輸出 vs 黃金」的內容殘差（opcode 序列）。
+
+    零殘差 = 全文內容鎖定（正文逐字一致）。非零 = 黃金含人工修正
+    （如正德三→十三年、補「府君生」），屬既有、可容忍的殘差。
+    """
+    a = normalize_content(result_text)
+    b = normalize_content(golden_text)
+    if a == b:
+        return []
+    return [[t, a[i1:i2], b[j1:j2]]
+            for t, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b).get_opcodes()
+            if t != 'equal']
+
+
+def residual_brief(residual, limit=4):
+    out = []
+    for t, old, new in residual[:limit]:
+        if t == 'insert':
+            out.append(f'+{new!r}')
+        elif t == 'delete':
+            out.append(f'-{old!r}')
+        else:
+            out.append(f'{old!r}→{new!r}')
+    if len(residual) > limit:
+        out.append(f'…共{len(residual)}處')
+    return '，'.join(out)
+
+
 # ---------------- 比對 ----------------
 
 def compare(metrics, base, mode):
@@ -144,7 +198,7 @@ def compare(metrics, base, mode):
     if base is None:
         return False, ['缺少基線（先跑 --selfcheck）']
 
-    if mode == 'exact':
+    if mode == 'exact' or mode == 'full':
         if metrics['titles'] != base['titles']:
             diffs.append(f"標題數 {base['titles']}→{metrics['titles']}")
         if metrics.get('birth_year') != base.get('birth_year'):
@@ -175,6 +229,15 @@ def golden_diff(metrics, golden):
     return diffs
 
 
+def case_content_residual(case):
+    """求某案例「管線輸出 vs 黃金」的歸一化內容殘差；無黃金或失敗回傳 None。"""
+    src, gld = case_paths(case)
+    if not Path(gld).exists():
+        return None
+    result, _ = NP.process_nianpu(read_text(src))
+    return content_residual(result, read_text(gld))
+
+
 # ---------------- 自檢：建立基線 ----------------
 
 def cmd_selfcheck(manifest):
@@ -194,6 +257,8 @@ def cmd_selfcheck(manifest):
             except Exception:
                 g = None
         entry = {'metrics': m, 'golden': g}
+        if case.get('mode') == 'full':
+            entry['content_residual'] = case_content_residual(case)
         baseline[name] = entry
         print(f"  基線 {name}：標題 {m['titles']} 覆蓋 {m.get('coverage')}% "
               f"出生年 {m.get('birth_year')} 可疑 {m.get('suspicious')} "
@@ -245,6 +310,7 @@ def cmd_run(manifest, baseline, full=False, update=False):
     warn_golden = []
     run_metrics = {}
     base_cases = (baseline or {}).get('cases', {}) if baseline else {}
+    run_content = {}   # full 模式：case -> 本次內容殘差（供更新基線）
 
     for case in cases:
         name = case['name']
@@ -253,8 +319,12 @@ def cmd_run(manifest, baseline, full=False, update=False):
         if not Path(src).exists():
             failed.append((name, ['源檔不存在']))
             continue
+        text = read_text(src)
         try:
-            m = pipeline_metrics(read_text(src))
+            if mode == 'full':
+                m, result_text = pipeline_metrics(text, with_text=True)
+            else:
+                m = pipeline_metrics(text)
         except Exception as e:
             failed.append((name, [f'拋異常：{e}']))
             continue
@@ -263,6 +333,26 @@ def cmd_run(manifest, baseline, full=False, update=False):
         base_entry = base_cases.get(name)
         base_m = base_entry.get('metrics') if base_entry else None
         ok, diffs = compare(m, base_m, mode)
+
+        # full 模式：全文內容鎖定——比對「本次內容殘差」與基線殘差。
+        # 零假陽性：與基線殘差一致則 PASS（既有人工修正殘差不誤報）；
+        # 出現基線未見的新殘差 → FAIL，抓到「輸出變了但指標不變」的 bug。
+        if mode == 'full' and ok:
+            residual = None
+            if Path(gld).exists():
+                residual = content_residual(result_text, read_text(gld))
+            run_content[name] = residual
+            base_residual = base_entry.get('content_residual') if base_entry else None
+            if base_residual is None:
+                diffs.append('full 模式缺基線內容殘差（先 --update/--selfcheck 重建基線）')
+                ok = False
+            elif residual != base_residual:
+                new = [r for r in (residual or []) if r not in (base_residual or [])]
+                if not new:
+                    new = [r for r in (residual or [])]  # 保護性列出
+                diffs.append(f'全文內容鎖定失守（新殘差：{residual_brief(new)}）')
+                ok = False
+
         if base_entry and base_m and base_m.get('format') and m.get('format') \
                 and base_m['format'] != m['format']:
             warn_fmt.append(f"{name}：格式族 {base_m['format']}→{m['format']}")
@@ -310,10 +400,17 @@ def cmd_run(manifest, baseline, full=False, update=False):
         print(f"\n回歸：{'/'.join(line)} 標題數不變（{len(cases)} 案例差異=0）")
 
     if update:
-        new_base = {'cases': {k: {'metrics': v, 'golden': base_cases.get(k, {}).get('golden')}
-                              for k, v in run_metrics.items()}}
+        new_cases = {}
+        for k, v in run_metrics.items():
+            entry = {'metrics': v, 'golden': base_cases.get(k, {}).get('golden')}
+            if k in run_content:
+                entry['content_residual'] = run_content.get(k)
+                name_entry = next((c for c in cases if c['name'] == k), None)
+                if name_entry and name_entry.get('mode') != 'full':
+                    entry.pop('content_residual', None)
+            new_cases[k] = entry
         BASELINE_PATH.write_text(
-            json.dumps(new_base, ensure_ascii=False, indent=2), encoding='utf-8')
+            json.dumps({'cases': new_cases}, ensure_ascii=False, indent=2), encoding='utf-8')
         print(f"\n已以本次結果刷新基線 → {BASELINE_PATH}（{len(run_metrics)} 案例）")
     return 0 if not failed else 1
 

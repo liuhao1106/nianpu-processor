@@ -286,6 +286,13 @@ def _expand_bare_gz_heading(heading, reign):
     if _ganzhi_index_of_pair(_ganzhi_pair_of_ad(ad)) != gi:
         return None
     n = offset + 1
+    # 年號年序長度檢驗：推算年的公元年必須落在該年號實際起訖內（隆慶祗 6 年，
+    # 故附录散文干支不可能推出「隆慶十年」；朱熹「紹熙五十二年」等亦被攔下）。
+    # 年序超過年號跨度 → 絕非該年號下的年份條目，回傳 None 交由呼叫端不切分。
+    _s0 = REIGN_START_YEARS.get(reign, rstart)
+    _e0 = REIGN_END_YEARS.get(reign, _s0 + 60)
+    if not (_s0 <= ad <= _e0):
+        return None
     if n > 80:
         return None
     year_str = _int_to_chinese_year(n)
@@ -624,6 +631,154 @@ def _split_embedded_years(text, person_extra=None):
             line = ''.join(parts)
         result.append(line)
     return '\n'.join(result)
+
+
+def _dedupe_repeated_year_headings(text):
+    """去述畧/卷前重複：bare_gz 格式譜的卷前摘要常以「干支，〔年號N年，公N歲〕」
+    無干支形式重複彙總主內容的逐年標題。主內容行首裸干支展開後必含干支
+    （年N年干支），述畧則無——故對「同一公元年」同時含干支與無干支標題者，
+    保留含干支者（主內容），把述畧無干支重複條目降回正文（去 ### 前綴）。
+    含干支的多緼條（如嘉靖三十三/三十六年各多緼）不受影響。僅 bare_gz 用。
+    """
+    lines = text.split('\n')
+    blocks, cur = [], None
+    for l in lines:
+        if l.startswith('### '):
+            if cur:
+                blocks.append(cur)
+            cur = [l]
+        elif cur is not None:
+            cur.append(l)
+    if cur:
+        blocks.append(cur)
+
+    def ad_of(h):
+        m = re.search(r'（(\d{4})年）', h)
+        return int(m.group(1)) if m else None
+
+    def has_gz(h):
+        h2 = re.sub(r'（\d{4}年）', '', h)
+        return bool(re.search(
+            r'(' + '|'.join(REIGNS) + r')?[一二三四五六七八九十]{1,3}年'
+            r'[甲乙丙丁戊己已庚辛壬癸巳][子丑寅卯辰巳已午未申酉戌戍戊亥]', h2))
+
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for i, b in enumerate(blocks):
+        ad = ad_of(b[0])
+        if ad is not None:
+            groups[ad].append(i)
+    drop = set()
+    for ad, idxs in groups.items():
+        if len(idxs) < 2:
+            continue
+        any_gz = any(has_gz(blocks[i][0]) for i in idxs)
+        if not any_gz:
+            continue
+        drop.update(i for i in idxs if not has_gz(blocks[i][0]))
+    if not drop:
+        return text
+    out = []
+    for i, b in enumerate(blocks):
+        if i in drop:
+            out.append(b[0][4:])     # 降回正文（去 ### 前綴）
+            out.extend(b[1:])
+        else:
+            out.extend(b)
+    return '\n'.join(out)
+
+
+def _reign_label_of_ad(ad):
+    """公元年 → 「年號N年」標籤（如 1546→嘉靖二十五年）；跨年號自動接續。"""
+    for reign in sorted(REIGN_START_YEARS, key=REIGN_START_YEARS.get):
+        s = REIGN_START_YEARS[reign]
+        e = REIGN_END_YEARS.get(reign, s + 60)
+        if s <= ad <= e:
+            n = _int_to_chinese_year(ad - s + 1)
+            if n:
+                return f'{reign}{n}年'
+    return None
+
+
+def _fill_missing_bare_year_title(text):
+    """補缺行内嵌入式年份（bare_gz 主叙事）：某年的行首裸干支標記被 OCR 併進前句
+    （内午→丙午，如鄭端簡「…撫卷長嘆也已。丙午三月，再疏乞致仕…」），致該年缺標題。
+
+    僅當「塊標題年 Y 的正文在句界後出現 『干支X月』，且該干支恰為 Y 的次年、
+    而次年確無標題」時，才在該處拆出次年新標題──否則不動，杜絕誤切祭文/記日
+    中的「干支+月」（其干支非次年，或次年已有標題）。須在 annotate_ad_years 之後
+    調用，故新標題直接帶（AD年）。
+    """
+    lines = text.split('\n')
+    blocks, cur = [], None
+    for l in lines:
+        if l.startswith('### '):
+            if cur:
+                blocks.append(cur)
+            cur = [l]
+        elif cur is not None:
+            cur.append(l)
+    if cur:
+        blocks.append(cur)
+
+    year_pat = re.compile(r'（(\d{4})年）')
+    existing = set()
+    for b in blocks:
+        m = year_pat.search(b[0])
+        if m:
+            existing.add(int(m.group(1)))
+
+    # 句界後「干支X月」：行首、或句末標點（。！？；」』）】）之後
+    _sb = '|'.join(re.escape(c) for c in '。！？；」』）】')
+    inline_pat = re.compile(
+        r'(?:(?<=\n)|(?<=[' + _sb + r']))\s*'
+        r'([' + _TG + r'][' + _DZ + r'])(?:[' + '正二三四五六七八九十' + r']{1,2}月)')
+
+    out = []
+    for b in blocks:
+        m = year_pat.search(b[0])
+        if not m:
+            out.extend(b)
+            continue
+        Y = int(m.group(1))
+        target = Y + 1
+        if target in existing:
+            out.extend(b)
+            continue
+        gz = _ganzhi_pair_of_ad(target)
+        if not gz:
+            out.extend(b)
+            continue
+        label = _reign_label_of_ad(target)
+        if not label:
+            out.extend(b)
+            continue
+        # 搜正文第一個匹配的句界「干支X月」
+        cut = None
+        for i in range(1, len(b)):
+            for mm in inline_pat.finditer(b[i]):
+                if mm.group(1) == gz:
+                    # 记录「干支」起點：截點之前的内容（如同行「…撫卷長嘆也已。」）
+                    # 仍归当年块，只把干支去掉後（保留「三月」等月名）作为次年块正文
+                    cut = (i, mm.start(), mm.start() + 2)
+                    break
+            if cut:
+                break
+        if not cut:
+            out.extend(b)
+            continue
+        i, gz_start, after_gz = cut
+        new_head = f'### {label}{gz}（{target}年）'
+        head_keep = b[i][:gz_start]
+        tail = b[i][after_gz:]
+        out.extend(b[:i])                                  # 块的前些行
+        if head_keep.strip():
+            out.append(head_keep)                          # 截点前行尾内容（…也已。）
+        out.append(new_head)                               # 次年新標題
+        if tail.strip():
+            out.append(tail)                               # 次年正文（干支月之後）
+        out.extend(b[i + 1:])                              # 塊內剩餘行
+    return '\n'.join(out)
 
 
 # ======== 自我進化系統 ========
@@ -1863,6 +2018,10 @@ def classify_format(text):
     fmt = {k: counts[k] >= _THRESH.get(k, 1) for k in _ORDER}
     fmt['person'] = fmt['person'] or bool(extra_person)   # 傳主名前綴偵測亦算有稱謂
     fmt['bare_gz'] = fmt['bare_gz'] and not fmt['gz_age']
+    # bare 優於 bare_gz：純年份格式（朱熹式）年譜的行首散文干支多是記日（紫陽文公
+    # 紹熙五年節內「辛丑，受詔進講」等日干支），誤用 bare_gz 展開會造出「紹熙五十
+    # 二年」之類不可能年份。僅當行首裸干支多於完整年標（bare_gz 為主導）時才啟用。
+    fmt['bare_gz'] = fmt['bare_gz'] and not (fmt['bare'] and n_bare > n_bare_gz)
     # 純年齡只在此譜無任何其他格式族時啟用（避免干擾萬清軒/李恕谷等既有格式）
     fmt['pure_age'] = fmt['pure_age'] and pure_age_birth_ok and not any(
         fmt[k] for k in ('person', 'no_person', 'ad', 'bare', 'bare_gz', 'gz_age', 'modern'))
@@ -2211,6 +2370,13 @@ def process_nianpu(text, slots=None):
         raw = m.group(0).strip()
         if not raw:
             return ''
+        # 〔〕注文排除：僅行首裸干支（bare_gz）格式適用——其卷前/述畧常以「干支、
+        # 〔年號N年，公N歲。〕」重複彙總全文年份（另以「干支、〔」跨括號開頭）。
+        # person 等格式的〔〕內年份可能是合法條目（警石「〔…。道光六年丙戌旣裝潢」），
+        # 故不在此排除之列。
+        if fmt.get('bare_gz') and any(s <= m.end() and m.start() <= e
+                                      for s, e in bracket_spans):
+            return raw
 
         # 出生條目：在第一個句號處截斷（僅保留干支+年號+年）
         # 「先生於」中的「生於」不是出生標記（(?<!先)排除）
@@ -2262,7 +2428,9 @@ def process_nianpu(text, slots=None):
                 if expanded is not None:
                     heading = expanded
                 else:
-                    heading = reign_state[0] + heading
+                    # 推算失敗（含年號年序超長等不可能年份，如附録導出的「隆慶十年」）：
+                    # 該行首干支屬散文/記日而無真年號，不成標題，保留原文
+                    return raw
             else:
                 heading = reign_state[0] + heading
 
@@ -2270,6 +2438,9 @@ def process_nianpu(text, slots=None):
 
     # 格式預分類：只套用與本譜相關的 pattern 子集，降低誤配（L1）
     pat = _build_full_pattern(fmt)
+    # 〔〕註文跨度（供 insert 排除註文內的重複年份條目，如鄭端簡述畧）。
+    # 於 OCR 修正後的 text 上計算，與 pat.sub 使用的 text 一致。
+    bracket_spans = [(mo.start(), mo.end()) for mo in re.finditer(r'〔[^〕]*〕', text)]
     result = pat.sub(insert, text)
     result = _merge_broken_lines(result)
     result = _split_embedded_years(result, person_extra=person_extra)
@@ -2279,6 +2450,11 @@ def process_nianpu(text, slots=None):
         result = split_by_month(result)
     # 在標題上標註公元年：嘉慶十一年丙寅 → 嘉慶十一年丙寅（1806年）
     result = annotate_ad_years(result)
+    # 述畧/卷前重複年份去重（bare_gz 格式：保留含干支主內容、述畧無干支重複降回正文）
+    if fmt.get('bare_gz'):
+        result = _dedupe_repeated_year_headings(result)
+        # 補缺行内嵌入式年份（bare_gz）：行首干支被 OCR 併入前句致缺年標題者（鄭端簡 1546）
+        result = _fill_missing_bare_year_title(result)
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result.strip() + '\n', None
 

@@ -14,7 +14,8 @@
         "titles": 75,
         "birth_year": 1642,
         "suspicious": 2
-      }
+      },
+      "content_residual": []
     },
     "方柏堂先生譜系略": {
       "metrics": {
@@ -62,7 +63,24 @@
         "titles": 49,
         "birth_year": 1477,
         "suspicious": 0
-      }
+      },
+      "content_residual": [
+        [
+          "delete",
+          "年是",
+          ""
+        ],
+        [
+          "insert",
+          "",
+          "十"
+        ],
+        [
+          "replace",
+          "0",
+          "1"
+        ]
+      ]
     },
     "警石府君年譜": {
       "metrics": {
@@ -78,7 +96,14 @@
         "titles": 74,
         "birth_year": 1791,
         "suspicious": 17
-      }
+      },
+      "content_residual": [
+        [
+          "insert",
+          "",
+          "府君生"
+        ]
+      ]
     },
     "殷譜經侍郎自定年譜": {
       "metrics": {
@@ -94,12 +119,13 @@
         "titles": 79,
         "birth_year": 1806,
         "suspicious": 0
-      }
+      },
+      "content_residual": []
     },
     "紫陽文公先生年譜": {
       "metrics": {
         "format": "",
-        "titles": 79,
+        "titles": 75,
         "birth_year": null,
         "suspicious": 0,
         "modern": false,
@@ -110,14 +136,15 @@
         "titles": 75,
         "birth_year": null,
         "suspicious": 0
-      }
+      },
+      "content_residual": []
     },
     "重刻鄭端簡公年譜": {
       "metrics": {
         "format": "",
-        "titles": 145,
-        "birth_year": 1499,
-        "suspicious": 5,
+        "titles": 72,
+        "birth_year": null,
+        "suspicious": 0,
         "modern": false,
         "coverage": 100.0,
         "missed": 0
@@ -142,7 +169,8 @@
         "titles": 74,
         "birth_year": null,
         "suspicious": 0
-      }
+      },
+      "content_residual": []
     }
   }
 }

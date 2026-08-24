@@ -29,13 +29,6 @@
   "person_prefix_variants": {},
   "processed_files": [
     {
-      "file": "先考松生府君年譜_完整.md",
-      "year_count": 68,
-      "coverage": 100.0,
-      "missed": 4,
-      "reigns_found": []
-    },
-    {
       "file": "鼎甫府君年譜_完整.md",
       "year_count": 71,
       "coverage": 98.6,
@@ -384,6 +377,13 @@
     {
       "file": "[曹月川先生年譜] 一卷_全文_无页码.md",
       "year_count": 34,
+      "coverage": 100.0,
+      "missed": 0,
+      "reigns_found": []
+    },
+    {
+      "file": "nianpu_processor.py",
+      "year_count": 39,
       "coverage": 100.0,
       "missed": 0,
       "reigns_found": []
