@@ -241,5 +241,14 @@
   "death": null,
   "years_lived": "",
   "dynasty": "明"
+ },
+ "余治": {
+  "id": "78914",
+  "name": "余治",
+  "eng": "Yu Zhi",
+  "birth": 1809,
+  "death": 1874,
+  "years_lived": "66",
+  "dynasty": "清"
  }
 }

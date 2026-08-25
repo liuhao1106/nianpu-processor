@@ -37,13 +37,6 @@
   "person_prefix_variants": {},
   "processed_files": [
     {
-      "file": "鼎甫府君年譜_完整.md",
-      "year_count": 71,
-      "coverage": 98.6,
-      "missed": 1,
-      "reigns_found": []
-    },
-    {
       "file": "桐溪達叟自編年譜_完整.md",
       "year_count": 64,
       "coverage": 97.0,
@@ -392,6 +385,13 @@
     {
       "file": "nianpu_processor.py",
       "year_count": 39,
+      "coverage": 100.0,
+      "missed": 0,
+      "reigns_found": []
+    },
+    {
+      "file": "余孝惠先生年譜 一卷_全文_无页码.md",
+      "year_count": 66,
       "coverage": 100.0,
       "missed": 0,
       "reigns_found": []
@@ -964,6 +964,20 @@
       "correct": "先生",
       "source": "舜山是仲明先生年譜",
       "date": "2026-08-23"
+    },
+    {
+      "type": "manual",
+      "wrong": "丙中",
+      "correct": "丙申",
+      "source": "余孝惠先生年譜",
+      "date": "2026-08-25"
+    },
+    {
+      "type": "manual",
+      "wrong": "蕙日公",
+      "correct": "蕙田公",
+      "source": "余孝惠先生年譜",
+      "date": "2026-08-25"
     }
   ],
   "lessons": [
