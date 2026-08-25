@@ -76,9 +76,9 @@ git clone https://github.com/<你的用戶名>/nianpu-processor.git
 python nianpu_processor.py <輸入檔案> [輸出檔案]
 ```
 
-### Claude Code 用戶
+### 以 Agent Skill 安裝（Claude Code / Cursor / Codex / OpenCode 等）
 
-將此目錄放入 `~/.claude/skills/nianpu-processor/` 後，Claude Code 會自動載入此 skill，**直接用自然語言下達命令即可**：
+將此目錄放入任一 skill 目錄（如 `~/.claude/skills/nianpu-processor/`、`.opencode/skills/` 等，隨 runtime 而定）後，支援 Agent Skills 標準的智能體會自動載入此 skill，**直接用自然語言下達命令即可**：
 
 ```
 /nianpu-processor <輸入檔案路徑> [輸出檔案路徑]        # 或直接說：「整理這個年譜」
@@ -86,6 +86,8 @@ python nianpu_processor.py <輸入檔案> [輸出檔案]
 「補全年號並標註公元年」
 「用 CBDB 核驗傳主生卒年，並修正年號誤標」
 ```
+
+不依賴特定 runtime：不採用該標準的環境可直接執行底層腳本（見上方「直接執行」）。
 
 ### 路徑配置（NIANPU_ROOT）
 
