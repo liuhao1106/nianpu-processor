@@ -1,0 +1,5 @@
+[
+  {"id": 1, "prompt": "整理这份年谱：tools/testdata/萬清軒先生年譜_source.md，处理完后直接归档。", "expected": "完整跑管线：切分整理 → --check → --cbdb/--fix → 归档；输出总结报告列出标题数/覆盖率/推定出生年/自动修正清单"},
+  {"id": 2, "prompt": "给这份已整理的年谱正文加标点：<已整理.md>", "expected": "nianpu_biaodian.py --chunk → LLM 按 docs/標點規則.md 逐块标点 → --merge 自动 verify 字符保全"},
+  {"id": 3, "prompt": "这份年谱年份很乱，三锚点老是打架，帮我修一下年号误配。", "expected": "--check 检出三锚点冲突 → --fix 自动修正；无法判定时收集 → nianpu_arbitrate.py 仲裁 → 保守套用并复验"}
+]
